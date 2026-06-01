@@ -21,6 +21,13 @@ const NUMERIC_CLAIM_PATTERN =
   /(\d[\d,]*(?:\.\d+)?\s?(?:%|％|億|兆|萬|千|百|元|美元|日圓|韓元|台幣|新台幣|k|K|m|M|bn|billion|million|兆元|億元)|EPS|CAGR|capex|CapEx|產能|市佔|毛利率|營益率|淨利|營收|供需|月產|wafers?)/i;
 const REPORT_SERVER_TIMEOUT_MS = 8 * 60 * 1000;
 
+function getReportMaxTokens(pageCount: number): number {
+  if (pageCount <= 3) return 8000;
+  if (pageCount <= 6) return 12000;
+  if (pageCount <= 9) return 16000;
+  return 20000;
+}
+
 function makeSSELine(type: string, data: Record<string, unknown>): string {
   return "data: " + JSON.stringify({ type, ...data }) + NEWLINE + NEWLINE;
 }
@@ -149,6 +156,7 @@ export async function POST(req: Request) {
   }
 
   const prompt = buildReportPrompt(framework, input);
+  const maxTokens = getReportMaxTokens(framework.pages.length);
   const encoder = new TextEncoder();
 
   const readable = new ReadableStream({
@@ -160,13 +168,21 @@ export async function POST(req: Request) {
       }, REPORT_SERVER_TIMEOUT_MS);
       const send = (type: string, data: Record<string, unknown>) => {
         if (closed) return;
-        controller.enqueue(encoder.encode(makeSSELine(type, { requestId, ...data })));
+        try {
+          controller.enqueue(encoder.encode(makeSSELine(type, { requestId, ...data })));
+        } catch {
+          closed = true;
+        }
       };
       const close = () => {
         if (closed) return;
         closed = true;
         clearTimeout(deadline);
-        controller.close();
+        try {
+          controller.close();
+        } catch {
+          // already closed/cancelled by proxy or client
+        }
       };
       const generateText = async (
         content: string,
@@ -175,7 +191,7 @@ export async function POST(req: Request) {
         try {
           const text = await streamAnthropicText(resolvedApiKey, {
             model: "claude-sonnet-4-6",
-            max_tokens: 32000,
+            max_tokens: maxTokens,
             tools: [{ type: "web_search_20250305", name: "web_search" }],
             messages: [{ role: "user", content }],
           }, onChunk, abortController.signal);
@@ -190,7 +206,7 @@ export async function POST(req: Request) {
           });
           const text = await streamAnthropicText(resolvedApiKey, {
             model: "claude-sonnet-4-6",
-            max_tokens: 32000,
+            max_tokens: maxTokens,
             messages: [{ role: "user", content }],
           }, onChunk, abortController.signal);
           return { text, usingSearch: false };
@@ -217,7 +233,7 @@ export async function POST(req: Request) {
 
           const result = await generateText(
             content,
-            attempt === 1 ? (text) => send("chunk", { text }) : undefined
+            (text) => send("chunk", { text })
           );
           usingSearch = result.usingSearch;
 
