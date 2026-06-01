@@ -46,6 +46,7 @@ interface AppState {
   framework: ResearchFramework | null;
   report: GeneratedReport | null;
   error: string;
+  frameworkNotice: string;
   loadingMessage: string;
   loadingElapsedSeconds: number;
   streamPreview: string;
@@ -67,6 +68,7 @@ const INITIAL: AppState = {
   framework: null,
   report: null,
   error: "",
+  frameworkNotice: "",
   loadingMessage: "",
   loadingElapsedSeconds: 0,
   streamPreview: "",
@@ -142,7 +144,13 @@ function previewResponseBody(text: string): string {
   return normalized.slice(0, 300);
 }
 
-function isErrorResponse(data: unknown): data is { error?: string; requestId?: string } {
+type ApiErrorResponse = {
+  error?: string;
+  requestId?: string;
+  fallbackFramework?: ResearchFramework;
+};
+
+function isErrorResponse(data: unknown): data is ApiErrorResponse {
   return Boolean(data && typeof data === "object" && "error" in data);
 }
 
@@ -168,6 +176,11 @@ function reportPhaseLabel(phase: string): string {
 async function readJsonResponse<T>(res: Response, fallbackLabel: string): Promise<T> {
   const text = await res.text();
   if (!text.trim()) {
+    if (res.status === 502 || res.status === 503 || res.status === 504) {
+      throw new Error(
+        `${fallbackLabel}: 部署層錯誤（HTTP ${res.status} ${res.statusText || ""}）。這通常代表 Netlify function timeout/crash 或 upstream request 未正常結束；請用 Netlify logs 對照發生時間。`
+      );
+    }
     throw new Error(
       `${fallbackLabel}: HTTP ${res.status} ${res.statusText || ""}; response body is empty.`
     );
@@ -176,6 +189,11 @@ async function readJsonResponse<T>(res: Response, fallbackLabel: string): Promis
     return JSON.parse(text) as T;
   } catch {
     const contentType = res.headers.get("content-type") || "(missing content-type)";
+    if (res.status === 502 || res.status === 503 || res.status === 504) {
+      throw new Error(
+        `${fallbackLabel}: 部署層錯誤（HTTP ${res.status} ${res.statusText || ""}），伺服器沒有回傳 JSON。這通常不是研究模組數量造成，而是 Netlify function/proxy timeout 或 crash。Preview: ${previewResponseBody(text)}`
+      );
+    }
     throw new Error(
       `${fallbackLabel}: HTTP ${res.status} ${res.statusText || ""}; expected JSON but received ${contentType}. Preview: ${previewResponseBody(text)}`
     );
@@ -284,6 +302,7 @@ export default function Home() {
       phase: "generating_framework",
       input,
       error: "",
+      frameworkNotice: "",
       loadingMessage: "Claude 正在定義產業邊界、拆解 value chain、產生逐頁研究架構...",
       loadingElapsedSeconds: 0,
       detailError: "",
@@ -291,7 +310,7 @@ export default function Home() {
 
     if (state.mockMode) {
       await delay(1800);
-      set({ phase: "reviewing_framework", framework: MOCK_FRAMEWORK, loadingMessage: "" });
+      set({ phase: "reviewing_framework", framework: MOCK_FRAMEWORK, frameworkNotice: "", loadingMessage: "" });
       return;
     }
 
@@ -320,11 +339,24 @@ export default function Home() {
         body: JSON.stringify({ ...bodyInput, apiKey: state.apiKey || undefined }),
         signal: controller.signal,
       });
-      const data = await readJsonResponse<ResearchFramework | { error?: string; requestId?: string }>(
+      const data = await readJsonResponse<ResearchFramework | ApiErrorResponse>(
         res,
         "Framework generation response parse failed"
       );
       if (!res.ok) {
+        if (isErrorResponse(data) && data.fallbackFramework) {
+          set({
+            phase: "reviewing_framework",
+            framework: data.fallbackFramework,
+            frameworkNotice: formatServerError(
+              data,
+              "Framework generation timed out; fallback framework is shown."
+            ),
+            loadingMessage: "",
+            loadingElapsedSeconds: 0,
+          });
+          return;
+        }
         throw new Error(
           isErrorResponse(data)
             ? formatServerError(data, `Framework generation failed: HTTP ${res.status} ${res.statusText || ""}`)
@@ -336,7 +368,13 @@ export default function Home() {
           formatServerError(data, "Framework generation returned an error response without an error message.")
         );
       }
-      set({ phase: "reviewing_framework", framework: data, loadingMessage: "", loadingElapsedSeconds: 0 });
+      set({
+        phase: "reviewing_framework",
+        framework: data,
+        frameworkNotice: "",
+        loadingMessage: "",
+        loadingElapsedSeconds: 0,
+      });
     } catch (err) {
       const isAbortError =
         timedOut || (err instanceof DOMException && err.name === "AbortError");
@@ -348,6 +386,7 @@ export default function Home() {
           ? err.message
           : "生成研究架構失敗",
         loadingMessage: "",
+        frameworkNotice: "",
         loadingElapsedSeconds: 0,
       });
     } finally {
@@ -416,6 +455,7 @@ export default function Home() {
     set({
       phase: "generating_report",
       error: "",
+      frameworkNotice: "",
       streamPreview: "",
       loadingMessage: "Claude 正在根據確認後的研究架構搜尋資料並撰寫完整研究報告...",
       reportProgress: 8,
@@ -634,6 +674,12 @@ export default function Home() {
                 確認後 Claude 會開始搜尋資料並撰寫完整研究報告。如果架構不符合預期，可以重新產生。
               </p>
             </div>
+            {state.frameworkNotice && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                <p className="text-sm font-semibold text-amber-900">已改用 fallback 研究大綱</p>
+                <p className="text-xs text-amber-800 mt-1 whitespace-pre-wrap">{state.frameworkNotice}</p>
+              </div>
+            )}
             <FrameworkReview
               framework={state.framework}
               selectedFocusAreas={(state.input?.selectedFocusAreas ?? []) as import("@/types/research").FocusArea[]}

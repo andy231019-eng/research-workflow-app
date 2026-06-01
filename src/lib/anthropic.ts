@@ -91,7 +91,8 @@ export function isWebSearchToolError(err: unknown): boolean {
 
 export async function createAnthropicMessage<TBody extends Record<string, unknown>>(
   apiKey: string,
-  body: TBody
+  body: TBody,
+  signal?: AbortSignal
 ): Promise<AnthropicMessageResponse> {
   let res: Response;
   try {
@@ -99,6 +100,7 @@ export async function createAnthropicMessage<TBody extends Record<string, unknow
       method: "POST",
       headers: makeAnthropicHeaders(apiKey),
       body: JSON.stringify(body),
+      signal,
     });
   } catch (err) {
     throw makeAnthropicTransportError(err);
@@ -114,7 +116,8 @@ export async function createAnthropicMessage<TBody extends Record<string, unknow
 export async function streamAnthropicText<TBody extends Record<string, unknown>>(
   apiKey: string,
   body: TBody,
-  onChunk?: (text: string) => void
+  onChunk?: (text: string) => void,
+  signal?: AbortSignal
 ): Promise<string> {
   let res: Response;
   try {
@@ -122,6 +125,7 @@ export async function streamAnthropicText<TBody extends Record<string, unknown>>
       method: "POST",
       headers: makeAnthropicHeaders(apiKey),
       body: JSON.stringify({ ...body, stream: true }),
+      signal,
     });
   } catch (err) {
     throw makeAnthropicTransportError(err);

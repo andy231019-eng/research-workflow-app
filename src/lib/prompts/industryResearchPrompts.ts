@@ -97,6 +97,14 @@ function getFrameworkContext(input: UserResearchInput): {
 
 export function buildFrameworkOutlinePrompt(input: UserResearchInput): string {
   const { geo, purpose, specialExtra, langInstruction, focusAreasStr } = getFrameworkContext(input);
+  const isKeyPlayersOnly =
+    input.selectedFocusAreas.length === 1 && input.selectedFocusAreas[0] === "key_players";
+  const pageCountRule = isKeyPlayersOnly
+    ? "- Since the user selected only Key Players, produce 3-5 pages focused on player segmentation, competitive positioning, business model differences, and likely winners/risks."
+    : "- Quick version: 5-6 pages. Standard version: 7-9 pages. Deep version: 10-12 pages.";
+  const compactnessRule = isKeyPlayersOnly
+    ? "- Keep this especially compact. Do not add market sizing, value chain, or trend pages unless they directly explain player differences."
+    : "- Produce an integrated page outline that covers the selected focus areas without creating one page per focus area.";
 
   return `You are an institutional-grade Industry Research Agent.
 
@@ -142,8 +150,8 @@ Return this compact schema:
 }
 
 OUTLINE RULES:
-- Produce an integrated page outline that covers the selected focus areas without creating one page per focus area.
-- Quick version: 5-6 pages. Standard version: 7-9 pages. Deep version: 10-12 pages.
+${compactnessRule}
+${pageCountRule}
 - Every page must be decision-oriented, not descriptive.
 - Use consultant-style page titles that imply the decision or insight.
 - Do NOT include requiredData, evidenceNeeded, suggestedSources, mustAnswer, possiblePlayers, or a detailed value chain in this step.
