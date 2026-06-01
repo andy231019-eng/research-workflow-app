@@ -107,6 +107,34 @@ function StepIndicator({ phase }: { phase: AppPhase }) {
   );
 }
 
+function previewResponseBody(text: string): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) return "(empty response body)";
+  return normalized.slice(0, 300);
+}
+
+function isErrorResponse(data: unknown): data is { error?: string } {
+  return Boolean(data && typeof data === "object" && "error" in data);
+}
+
+async function readJsonResponse<T>(res: Response, fallbackLabel: string): Promise<T> {
+  const text = await res.text();
+  if (!text.trim()) {
+    throw new Error(
+      `${fallbackLabel}: HTTP ${res.status} ${res.statusText || ""}; response body is empty.`
+    );
+  }
+
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    const contentType = res.headers.get("content-type") || "(missing content-type)";
+    throw new Error(
+      `${fallbackLabel}: HTTP ${res.status} ${res.statusText || ""}; expected JSON but received ${contentType}. Preview: ${previewResponseBody(text)}`
+    );
+  }
+}
+
 export default function Home() {
   const [state, setState] = useState<AppState>(INITIAL);
 
@@ -171,8 +199,20 @@ export default function Home() {
         body: JSON.stringify({ ...bodyInput, apiKey: state.apiKey || undefined }),
         signal: controller.signal,
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Framework generation failed");
+      const data = await readJsonResponse<ResearchFramework | { error?: string }>(
+        res,
+        "Framework generation response parse failed"
+      );
+      if (!res.ok) {
+        throw new Error(
+          isErrorResponse(data) && data.error
+            ? data.error
+            : `Framework generation failed: HTTP ${res.status} ${res.statusText || ""}`
+        );
+      }
+      if (isErrorResponse(data)) {
+        throw new Error(data.error || "Framework generation returned an error response without an error message.");
+      }
       set({ phase: "reviewing_framework", framework: data, loadingMessage: "", loadingElapsedSeconds: 0 });
     } catch (err) {
       const isAbortError =

@@ -44,6 +44,19 @@ function durationMs(startedAt: number): number {
   return Date.now() - startedAt;
 }
 
+function errorDetails(err: unknown): Record<string, unknown> {
+  return {
+    name: err instanceof Error ? err.name : typeof err,
+    message: err instanceof Error ? err.message : String(err),
+    status: (err as { status?: number }).status,
+    responsePreview: (err as { responseText?: string }).responseText?.slice(0, 300),
+  };
+}
+
+function jsonError(error: string, status: number, requestId: string) {
+  return NextResponse.json({ error, requestId }, { status });
+}
+
 export async function POST(req: Request) {
   const requestId = generateId();
   const startedAt = Date.now();
@@ -51,9 +64,12 @@ export async function POST(req: Request) {
 
   try {
     body = (await req.json()) as RequestBody;
-  } catch {
-    console.warn(`[generate-framework:${requestId}] invalid request body`);
-    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+  } catch (err) {
+    console.warn(`[generate-framework:${requestId}] invalid request body`, {
+      durationMs: durationMs(startedAt),
+      error: errorDetails(err),
+    });
+    return jsonError("Invalid request body", 400, requestId);
   }
 
   const { apiKey, ...input } = body;
@@ -69,7 +85,7 @@ export async function POST(req: Request) {
     console.warn(`[generate-framework:${requestId}] missing industryName`, {
       durationMs: durationMs(startedAt),
     });
-    return NextResponse.json({ error: "industryName is required" }, { status: 400 });
+    return jsonError("industryName is required", 400, requestId);
   }
 
   let resolvedApiKey: string;
@@ -78,11 +94,12 @@ export async function POST(req: Request) {
   } catch (err) {
     console.error(`[generate-framework:${requestId}] client error`, {
       durationMs: durationMs(startedAt),
-      error: err instanceof Error ? err.message : "Anthropic client error",
+      error: errorDetails(err),
     });
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Anthropic client error" },
-      { status: 500 }
+    return jsonError(
+      err instanceof Error ? err.message : "Anthropic client error",
+      500,
+      requestId
     );
   }
 
@@ -151,19 +168,14 @@ export async function POST(req: Request) {
         attempt,
         durationMs: durationMs(startedAt),
         error: lastError,
-        errorType: err instanceof Error ? err.constructor.name : typeof err,
-        errorStatus: (err as { status?: number }).status,
-        errorBody: (err as { responseText?: string }).responseText,
+        details: errorDetails(err),
       });
       if (attempt === 2 || !isRetryableGenerationError(err)) {
         console.error(`[generate-framework:${requestId}] failed`, {
           durationMs: durationMs(startedAt),
           error: lastError,
         });
-        return NextResponse.json(
-          { error: "Framework generation failed: " + lastError },
-          { status: 500 }
-        );
+        return jsonError("Framework generation failed: " + lastError, 500, requestId);
       }
     }
   }
@@ -172,8 +184,5 @@ export async function POST(req: Request) {
     durationMs: durationMs(startedAt),
     error: lastError,
   });
-  return NextResponse.json(
-    { error: "Framework generation failed: " + lastError },
-    { status: 500 }
-  );
+  return jsonError("Framework generation failed: " + lastError, 500, requestId);
 }

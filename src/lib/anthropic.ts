@@ -10,15 +10,23 @@ type AnthropicMessageResponse = {
   content?: Array<AnthropicTextBlock | { type: string; [key: string]: unknown }>;
 };
 
+type AnthropicErrorOptions = {
+  status?: number;
+  responseText?: string;
+  cause?: unknown;
+};
+
 export class AnthropicApiError extends Error {
   status?: number;
   responseText?: string;
+  cause?: unknown;
 
-  constructor(message: string, status?: number, responseText?: string) {
+  constructor(message: string, options: AnthropicErrorOptions = {}) {
     super(message);
     this.name = "AnthropicApiError";
-    this.status = status;
-    this.responseText = responseText;
+    this.status = options.status;
+    this.responseText = options.responseText;
+    this.cause = options.cause;
   }
 }
 
@@ -100,7 +108,7 @@ export async function createAnthropicMessage<TBody extends Record<string, unknow
     throw await makeAnthropicApiError(res);
   }
 
-  return (await res.json()) as AnthropicMessageResponse;
+  return parseAnthropicJsonResponse<AnthropicMessageResponse>(await res.text(), res.status);
 }
 
 export async function streamAnthropicText<TBody extends Record<string, unknown>>(
@@ -123,7 +131,9 @@ export async function streamAnthropicText<TBody extends Record<string, unknown>>
     throw await makeAnthropicApiError(res);
   }
   if (!res.body) {
-    throw new AnthropicApiError("Anthropic streaming response did not include a body", res.status);
+    throw new AnthropicApiError("Anthropic streaming response did not include a body", {
+      status: res.status,
+    });
   }
 
   const reader = res.body.getReader();
@@ -179,15 +189,42 @@ function sanitizeAnthropicApiKey(raw: string): string {
 }
 
 function makeAnthropicTransportError(err: unknown): AnthropicApiError {
+  const name = err instanceof Error ? err.name : "UnknownError";
   const message = err instanceof Error ? err.message : "Unknown transport error";
   return new AnthropicApiError(
-    "Anthropic API request could not be sent. This is usually caused by an invalid API key value or a serverless runtime request/header restriction: " + message
+    "Anthropic API request could not be sent. Transport error " + name + ": " + message,
+    { cause: err }
   );
 }
 
 async function makeAnthropicApiError(res: Response): Promise<AnthropicApiError> {
   const responseText = await res.text().catch(() => "");
-  return new AnthropicApiError(res.statusText || "Anthropic API request failed", res.status, responseText);
+  return new AnthropicApiError(res.statusText || "Anthropic API request failed", {
+    status: res.status,
+    responseText,
+  });
+}
+
+function parseAnthropicJsonResponse<T>(responseText: string, status: number): T {
+  if (!responseText.trim()) {
+    throw new AnthropicApiError("Anthropic API returned an empty response body", {
+      status,
+      responseText,
+    });
+  }
+
+  try {
+    return JSON.parse(responseText) as T;
+  } catch (err) {
+    throw new AnthropicApiError(
+      "Anthropic API returned non-JSON response. Preview: " + responseText.slice(0, 300),
+      {
+        status,
+        responseText,
+        cause: err,
+      }
+    );
+  }
 }
 
 function extractAnthropicErrorMessage(responseText?: string): string {
