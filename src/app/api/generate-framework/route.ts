@@ -52,7 +52,7 @@ export async function POST(req: Request) {
   const { apiKey, ...input } = body;
   const industryName = input.industryName?.trim() || "(missing)";
 
-  console.info(`[generate-framework] apiKey received: "${apiKey ? apiKey.slice(0, 8) + "..." : "(none)"}"`);
+  console.info(`[generate-framework] apiKey received: "${apiKey ? `${apiKey.slice(0, 12)}...${apiKey.slice(-4)} (len=${apiKey.length})` : "(none)"}"`);
 
   console.info(`[generate-framework:${requestId}] started`, {
     industryName,
