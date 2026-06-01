@@ -72,12 +72,6 @@ function validateStrictReport(parsed: ParsedReport | null): string[] {
   return errors;
 }
 
-function findHighRiskSources(sources: SourceItem[]): SourceItem[] {
-  return sources
-    .filter((source) => NUMERIC_CLAIM_PATTERN.test(source.claim) || !URL_PATTERN.test(source.sourceUrl))
-    .slice(0, 12);
-}
-
 function usableSources(sources: SourceItem[] = []): SourceItem[] {
   return sources.filter((source) => {
     if (!source.claim?.trim()) return false;
@@ -113,41 +107,6 @@ function makeReport(
     timeHorizon: framework.timeHorizon,
     webSearchUsed: usingSearch,
   };
-}
-
-function makeAuditPrompt(report: ParsedReport, highRiskSources: SourceItem[]): string {
-  return `You are a strict investment committee fact-check reviewer.
-
-TASK: Audit ONLY high-risk numeric claims and source links in the report. Do not rewrite the analysis style. Fix source bullets, remove unsupported numbers, and add data gaps for unresolved conflicts.
-
-HIGH-RISK CLAIMS TO CHECK:
-${highRiskSources
-  .map(
-    (source, index) => `${index + 1}. Claim: ${source.claim}
-Source: ${source.sourceTitle} (${source.sourceUrl})
-Type=${source.sourceType}; Date=${source.date}`
-  )
-  .join("\n\n")}
-
-AUDIT RULES:
-- Every source must include only claim, sourceTitle, sourceUrl, sourceType, and date.
-- sourceUrl must be a real http(s) link, not a fabricated slug.
-- date must be yyyy-mm-dd.
-- Every markdown section must include "### Sources / 資料來源" with bullets formatted exactly as: - [Title](URL) — Type — yyyy-mm-dd
-- If sources conflict, use conservative ranges in markdown or move the claim to Data Gaps.
-- Keep unsupported claims out of Final Industry Conclusion.
-- Preserve valid sections, but change wording where it is too certain.
-
-Return ONLY valid JSON wrapped in <json>...</json> tags using the same schema:
-{
-  "title": "string",
-  "markdown": "audited markdown",
-  "sources": [{"claim":"string","sourceTitle":"string","sourceUrl":"https://...","sourceType":"string","date":"yyyy-mm-dd"}],
-  "dataGaps": ["string"]
-}
-
-REPORT TO AUDIT:
-${JSON.stringify(report)}`;
 }
 
 function makeRetryInstruction(errors: string[]): string {
@@ -237,73 +196,6 @@ export async function POST(req: Request) {
           return { text, usingSearch: false };
         }
       };
-      const auditHighRiskClaims = async (
-        report: ParsedReport,
-        usingSearch: boolean
-      ): Promise<ParsedReport> => {
-        const highRiskSources = findHighRiskSources(report.sources ?? []);
-        if (highRiskSources.length === 0) return report;
-
-        send("status", {
-          ...progressStatus(
-            `正在針對 ${highRiskSources.length} 個高風險數字與來源連結做二次審核...`,
-            82,
-            "audit"
-          ),
-        });
-
-        try {
-          const auditPrompt = makeAuditPrompt(report, highRiskSources);
-          const text = usingSearch
-            ? await streamAnthropicText(resolvedApiKey, {
-                model: "claude-sonnet-4-6",
-                max_tokens: 12000,
-                tools: [{ type: "web_search_20250305", name: "web_search" }],
-                messages: [{ role: "user", content: auditPrompt }],
-              }, undefined, abortController.signal)
-            : await streamAnthropicText(resolvedApiKey, {
-                model: "claude-sonnet-4-6",
-                max_tokens: 12000,
-                messages: [{ role: "user", content: auditPrompt }],
-              }, undefined, abortController.signal);
-
-          const audited = tryParseJson<ParsedReport>(text);
-          const auditErrors = validateStrictReport(audited);
-          if (auditErrors.length > 0) {
-            send("status", {
-              ...progressStatus(
-                "高風險數字審核未完全通過；保留原始報告並新增資料缺口提醒。",
-                92,
-                "audit_warning"
-              ),
-            });
-            return {
-              ...report,
-              dataGaps: [
-                ...(report.dataGaps ?? []),
-                "高風險數字二次審核未完全通過，引用前請人工確認： " + auditErrors.slice(0, 5).join("; "),
-              ],
-            };
-          }
-          return audited as ParsedReport;
-        } catch (err) {
-          send("status", {
-            ...progressStatus(
-              "高風險數字審核失敗；保留原始報告並新增資料缺口提醒。",
-              92,
-              "audit_warning"
-            ),
-          });
-          return {
-            ...report,
-            dataGaps: [
-              ...(report.dataGaps ?? []),
-              "高風險數字二次審核執行失敗，引用前請人工確認：" + formatAnthropicError(err),
-            ],
-          };
-        }
-      };
-
       try {
         let lastErrors: string[] = [];
         let usingSearch = true;
@@ -365,11 +257,10 @@ export async function POST(req: Request) {
             continue;
           }
 
-          const validParsed = await auditHighRiskClaims(parsed as ParsedReport, usingSearch);
           send("status", {
             ...progressStatus("正在整理最終報告與資料缺口...", 96, "finalize"),
           });
-          const report = makeReport(validParsed, framework, usingSearch);
+          const report = makeReport(parsed as ParsedReport, framework, usingSearch);
           send("done", { report, progress: 100, phase: "done" });
           close();
           return;
