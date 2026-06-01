@@ -113,8 +113,13 @@ function previewResponseBody(text: string): string {
   return normalized.slice(0, 300);
 }
 
-function isErrorResponse(data: unknown): data is { error?: string } {
+function isErrorResponse(data: unknown): data is { error?: string; requestId?: string } {
   return Boolean(data && typeof data === "object" && "error" in data);
+}
+
+function formatServerError(data: { error?: string; requestId?: string }, fallback: string): string {
+  const message = data.error?.trim() || fallback;
+  return data.requestId ? `${message}\nRequest ID: ${data.requestId}` : message;
 }
 
 async function readJsonResponse<T>(res: Response, fallbackLabel: string): Promise<T> {
@@ -199,19 +204,21 @@ export default function Home() {
         body: JSON.stringify({ ...bodyInput, apiKey: state.apiKey || undefined }),
         signal: controller.signal,
       });
-      const data = await readJsonResponse<ResearchFramework | { error?: string }>(
+      const data = await readJsonResponse<ResearchFramework | { error?: string; requestId?: string }>(
         res,
         "Framework generation response parse failed"
       );
       if (!res.ok) {
         throw new Error(
-          isErrorResponse(data) && data.error
-            ? data.error
+          isErrorResponse(data)
+            ? formatServerError(data, `Framework generation failed: HTTP ${res.status} ${res.statusText || ""}`)
             : `Framework generation failed: HTTP ${res.status} ${res.statusText || ""}`
         );
       }
       if (isErrorResponse(data)) {
-        throw new Error(data.error || "Framework generation returned an error response without an error message.");
+        throw new Error(
+          formatServerError(data, "Framework generation returned an error response without an error message.")
+        );
       }
       set({ phase: "reviewing_framework", framework: data, loadingMessage: "", loadingElapsedSeconds: 0 });
     } catch (err) {

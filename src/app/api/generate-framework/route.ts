@@ -54,7 +54,8 @@ function errorDetails(err: unknown): Record<string, unknown> {
 }
 
 function jsonError(error: string, status: number, requestId: string) {
-  return NextResponse.json({ error, requestId }, { status });
+  const message = error.trim() || "Framework generation failed before a detailed error was captured.";
+  return NextResponse.json({ error: message, requestId }, { status });
 }
 
 export async function POST(req: Request) {
@@ -175,7 +176,11 @@ export async function POST(req: Request) {
           durationMs: durationMs(startedAt),
           error: lastError,
         });
-        return jsonError("Framework generation failed: " + lastError, 500, requestId);
+        return jsonError(
+          "Framework generation failed: " + (lastError || "No detailed error was captured."),
+          500,
+          requestId
+        );
       }
     }
   }
@@ -184,5 +189,9 @@ export async function POST(req: Request) {
     durationMs: durationMs(startedAt),
     error: lastError,
   });
-  return jsonError("Framework generation failed: " + lastError, 500, requestId);
+  return jsonError(
+    "Framework generation failed: " + (lastError || "No detailed error was captured."),
+    500,
+    requestId
+  );
 }
