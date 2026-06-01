@@ -145,6 +145,9 @@ export async function POST(req: Request) {
         attempt,
         durationMs: durationMs(startedAt),
         error: lastError,
+        errorType: err instanceof Error ? err.constructor.name : typeof err,
+        errorStatus: (err as { status?: number }).status,
+        errorHeaders: (err as { headers?: unknown }).headers,
       });
       if (attempt === 2) {
         console.error(`[generate-framework:${requestId}] failed`, {
