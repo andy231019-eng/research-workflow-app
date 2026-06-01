@@ -1,4 +1,42 @@
-import type { ResearchFramework, GeneratedReport } from "@/types/research";
+import type { ResearchFramework, GeneratedReport, IndustrySubcategory } from "@/types/research";
+
+export const MOCK_SUBCATEGORIES: IndustrySubcategory[] = [
+  {
+    id: "vertical_saas",
+    name: "垂直 SaaS",
+    nameEn: "Vertical SaaS",
+    description: "針對特定產業（醫療、建設、法律、餐飲等）深度整合的 SaaS，具有高切換成本與業務流程綁定。",
+    examples: ["ANDPAD（建設）", "M3（醫療）", "SmartHR（HR）"],
+  },
+  {
+    id: "horizontal_saas",
+    name: "水平 SaaS",
+    nameEn: "Horizontal SaaS",
+    description: "跨產業通用功能型 SaaS，如會計、CRM、電子簽名、文件管理，市場廣但競爭激烈。",
+    examples: ["freee（會計）", "Money Forward", "Sansan（名片管理）"],
+  },
+  {
+    id: "ai_native_saas",
+    name: "AI Native SaaS",
+    nameEn: "AI-Native SaaS",
+    description: "以 AI / LLM 為核心能力打造的新一代 SaaS，以 Agent 取代人工流程，對傳統 SaaS 形成顛覆性威脅。",
+    examples: ["AI 客服 Agent", "自動化財報分析", "AI 法務合約審查"],
+  },
+  {
+    id: "smb_saas",
+    name: "中小企業 SaaS",
+    nameEn: "SMB SaaS",
+    description: "專注服務日本中小企業的 SaaS，以低價、易用、本地化服務為核心，滲透率仍低但市場龐大。",
+    examples: ["会計freee", "Misoca", "Airレジ"],
+  },
+  {
+    id: "enterprise_saas",
+    name: "大型企業 SaaS",
+    nameEn: "Enterprise SaaS",
+    description: "服務日本大型企業，通常透過 SIer 代理銷售，導入週期長、合約金額高、客製化程度高。",
+    examples: ["Salesforce Japan", "ServiceNow", "SAP S/4HANA"],
+  },
+];
 
 export const MOCK_FRAMEWORK: ResearchFramework = {
   projectTitle: "日本 SaaS 產業商業策略深度分析",

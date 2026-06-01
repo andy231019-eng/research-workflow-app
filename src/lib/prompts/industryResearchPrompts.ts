@@ -65,7 +65,13 @@ const SPECIAL_FRAMEWORK_EXTRA: Record<string, string> = {
   energy_infrastructure: `For Energy/Infrastructure, also require: capacity factor, utilization, LCOE, subsidy dependency, grid connection constraints, project finance structure, long-term contract dynamics.`,
 };
 
-export function buildFrameworkPrompt(input: UserResearchInput): string {
+function getFrameworkContext(input: UserResearchInput): {
+  geo: string;
+  purpose: string;
+  specialExtra: string;
+  langInstruction: string;
+  focusAreasStr: string;
+} {
   const geo = (input.geographies ?? [])
     .map((g) => (g === "other" && input.geographyOther ? input.geographyOther : GEOGRAPHY_LABEL[g] ?? g))
     .join("、") || "全球";
@@ -80,9 +86,137 @@ export function buildFrameworkPrompt(input: UserResearchInput): string {
       ? `Auto-detect the appropriate special framework. If this looks like SaaS, Semiconductor, Platform, Manufacturing, Consumer, Financial Services, Healthcare, or Energy, apply the relevant extra data requirements.`
       : (SPECIAL_FRAMEWORK_EXTRA[input.specialIndustryFramework] ?? "");
 
-  const langInstruction = LANG_INSTRUCTION[input.language] ?? LANG_INSTRUCTION.traditional_chinese;
+  return {
+    geo,
+    purpose,
+    specialExtra,
+    langInstruction: LANG_INSTRUCTION[input.language] ?? LANG_INSTRUCTION.traditional_chinese,
+    focusAreasStr: input.selectedFocusAreas.join(", "),
+  };
+}
 
-  const focusAreasStr = input.selectedFocusAreas.join(", ");
+export function buildFrameworkOutlinePrompt(input: UserResearchInput): string {
+  const { geo, purpose, specialExtra, langInstruction, focusAreasStr } = getFrameworkContext(input);
+
+  return `You are an institutional-grade Industry Research Agent.
+
+TASK: Generate a LIGHTWEIGHT research framework outline, not the full detailed framework and not the final report.
+
+The user needs to quickly verify whether the research direction and page structure are correct. Keep the output compact enough to complete quickly.
+
+USER INPUT:
+- Industry: ${input.industryName}
+- Geography: ${geo}
+- Analysis Purpose: ${purpose}
+- Time Horizon: ${HORIZON_LABEL[input.timeHorizon] ?? input.timeHorizon}
+- Output Depth: ${DEPTH_LABEL[input.outputDepth] ?? input.outputDepth}
+- Selected Focus Areas: ${focusAreasStr}
+- Special Industry Framework: ${FRAMEWORK_LABEL[input.specialIndustryFramework] ?? input.specialIndustryFramework}
+${input.customFocus ? `- Custom Focus: ${input.customFocus}` : ""}
+
+SPECIAL FRAMEWORK GUIDANCE:
+${specialExtra}
+
+LANGUAGE: ${langInstruction}
+
+OUTPUT REQUIREMENTS:
+Return ONLY valid JSON wrapped in <json>...</json> tags. No markdown, no explanation outside the tags.
+
+Return this compact schema:
+{
+  "projectTitle": "string",
+  "industryName": "string",
+  "geography": "string",
+  "analysisPurpose": "string",
+  "timeHorizon": "string",
+  "pages": [
+    {
+      "id": "page_001",
+      "pageNumber": 1,
+      "pageTitle": "string",
+      "coreQuestion": "string",
+      "mainMessageHypothesis": "string",
+      "suggestedVisual": "string"
+    }
+  ]
+}
+
+OUTLINE RULES:
+- Produce an integrated page outline that covers the selected focus areas without creating one page per focus area.
+- Quick version: 5-6 pages. Standard version: 7-9 pages. Deep version: 10-12 pages.
+- Every page must be decision-oriented, not descriptive.
+- Use consultant-style page titles that imply the decision or insight.
+- Do NOT include requiredData, evidenceNeeded, suggestedSources, mustAnswer, possiblePlayers, or a detailed value chain in this step.
+- Keep each field concise.`;
+}
+
+export function buildFrameworkDetailPrompt(
+  framework: ResearchFramework,
+  input: UserResearchInput,
+  pagesToDetail: ResearchFramework["pages"]
+): string {
+  const { geo, purpose, specialExtra, langInstruction } = getFrameworkContext(input);
+  const pagesStr = pagesToDetail
+    .map(
+      (p) => `
+PAGE ${p.pageNumber}: ${p.pageTitle}
+id: ${p.id}
+Core Question: ${p.coreQuestion}
+Main Message Hypothesis: ${p.mainMessageHypothesis}
+Suggested Visual: ${p.suggestedVisual}`
+    )
+    .join("\n---");
+
+  return `You are an institutional-grade Industry Research Agent.
+
+TASK: Enrich ONLY the listed research framework pages with detailed planning fields. Do not write the final report.
+
+PROJECT: ${framework.projectTitle}
+INDUSTRY: ${framework.industryName}
+GEOGRAPHY: ${geo || framework.geography}
+PURPOSE: ${purpose || framework.analysisPurpose}
+TIME HORIZON: ${framework.timeHorizon}
+
+SPECIAL FRAMEWORK GUIDANCE:
+${specialExtra}
+
+PAGES TO ENRICH:
+${pagesStr}
+
+LANGUAGE: ${langInstruction}
+
+OUTPUT REQUIREMENTS:
+Return ONLY valid JSON wrapped in <json>...</json> tags. No markdown, no explanation outside the tags.
+
+Return exactly this schema:
+{
+  "pages": [
+    {
+      "id": "same id as input",
+      "pageNumber": 1,
+      "pageTitle": "same or lightly improved title",
+      "coreQuestion": "same or lightly improved question",
+      "mainMessageHypothesis": "same or lightly improved hypothesis",
+      "requiredData": ["3-5 concrete data points"],
+      "evidenceNeeded": ["3-5 evidence tests"],
+      "suggestedSources": ["3-5 source types or named sources"],
+      "suggestedVisual": "specific chart/table idea",
+      "analysisAngle": "one concise analysis angle",
+      "mustAnswer": ["3-5 specific questions"]
+    }
+  ]
+}
+
+DETAIL RULES:
+- Return details only for the listed pages.
+- Preserve page ids so the app can merge the results.
+- requiredData should be specific and measurable where possible.
+- suggestedSources should be source categories or likely named sources, not fabricated URLs.
+- Keep the response compact.`;
+}
+
+export function buildFrameworkPrompt(input: UserResearchInput): string {
+  const { geo, purpose, specialExtra, langInstruction, focusAreasStr } = getFrameworkContext(input);
 
   return `You are an institutional-grade Industry Research Agent combining the roles of:
 - Strategy Consultant (McKinsey / Bain / BCG)
@@ -241,16 +375,21 @@ LANGUAGE: ${langInstruction}
 
 CRITICAL RULES:
 - Use Claude's web search capability if available to find current, reliable data.
-- STRICT ACCURACY MODE IS ON.
+- STRICT INVESTMENT COMMITTEE ACCURACY MODE IS ON.
 - Every important claim MUST have a source and a matching entry in the JSON sources array.
 - Every number, ranking, market size, growth rate, company financial, regulation, share, valuation, and dated fact MUST have a source.
 - Do NOT invent sources. Do NOT invent exact market size numbers if not found.
 - If public data is limited, clearly state: "目前公開資料有限，無法可靠判斷。"
-- Distinguish facts, inference, and judgment. Mark inferences clearly and state which sourced facts support them.
+- Distinguish primary-source facts, estimates/forecasts, author inference, and judgment. Mark inferences clearly and state which sourced facts support them.
+- The Fact section can ONLY contain primary facts or high-confidence professional/financial database evidence. Broker models, market research estimates, media second-hand reports, blogs, and author reasoning MUST NOT appear under Fact.
+- Broker EPS/GM forecasts, target prices, future margin assumptions, market share forecasts, capacity forecasts, supply/demand gap estimates, and TAM/CAGR estimates must be labeled as Estimate / 機構或二手估計.
+- Author causal claims, winner/loser views, "structural not cyclical" claims, and competitive timing assumptions must be labeled as Inference / 作者推論.
+- If a source is a media repost of a broker or industry rumor and no original PDF/official disclosure is found, set evidenceClass to secondary_estimate or unverified, not primary_fact.
+- For conflicting figures, report a conservative range or say sources conflict. Do not choose the most optimistic single number.
 - Unsupported claims MUST NOT appear in Fact, Judgment, So What, or Final Industry Conclusion. Move them to Data Gaps instead.
 - The JSON sources array MUST contain only verified or partial evidence. If a claim would be unsupported, omit it from the report body and add it to dataGaps.
 - Partial evidence is allowed only when the report clearly labels it as limited/partial and avoids strong conclusions.
-- Every section MUST include: Fact → Analysis → Judgment → So What.
+- Every section MUST include: Fact / 一級來源事實 → Estimate / 機構或二手估計 → Inference / 作者推論 → So What / 投資或策略意涵 → Data Gaps / 待查證事項.
 - The report must answer: Is this an attractive industry? Where is the profit pool? Who wins?
 - No encyclopedic descriptions. No pure news summaries. No opinion without data.
 - No vague adjectives. Cite specific numbers, percentages, company names.
@@ -292,17 +431,20 @@ REQUIRED MARKDOWN REPORT STRUCTURE:
 
 ## [pageNumber]. [pageTitle]
 
-### Fact
-[Specific data points with sources]
+### Fact / 一級來源事實
+[Only primary-source facts or high-confidence professional/financial database evidence]
 
-### Analysis
-[What the data means]
+### Estimate / 機構或二手估計
+[Broker, market research, media-transcribed, or database estimates. Mark clearly as estimates.]
 
-### Judgment
-[Claude's view: Attractive / Unattractive / Watch for X]
+### Inference / 作者推論
+[Analytical interpretation. Must cite which facts or estimates support the inference.]
 
-### So What
+### So What / 投資或策略意涵
 [Implication for investors / strategists / founders]
+
+### Data Gaps / 待查證事項
+[Specific items that remain unverified, conflicted, or only second-hand]
 
 ### Suggested Visual
 [Description of chart/table that would best show this]
@@ -323,8 +465,8 @@ REQUIRED MARKDOWN REPORT STRUCTURE:
 
 ## Supporting Facts & Sources 支撐資料與來源
 
-| Claim | Claim Type | Evidence Status | Source Title | Source URL | Source Type | Date | Reliability (1-5) | Notes |
-|---|---|---|---|---|---|---|---|---|
+| Claim | Claim Type | Evidence Class | Source Tier | Confidence | Cross-check | Evidence Status | Source Title | Source URL | Source Type | Date | Reliability (1-5) | Notes |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
 
 ---
 
@@ -359,6 +501,11 @@ RETURN FORMAT: Return the result as valid JSON wrapped in <json>...</json> tags,
       "date": "string",
       "reliabilityScore": 1-5,
       "evidenceStatus": "verified|partial|unsupported",
+      "evidenceClass": "primary_fact|secondary_estimate|analyst_forecast|author_inference|unverified",
+      "sourceTier": "primary|professional|financial_database|media|blog_or_forum|unknown",
+      "confidence": "high|medium|low",
+      "needsCrossCheck": true,
+      "crossCheckStatus": "matched|conflicted|not_checked|not_found",
       "notes": "string"
     }
   ],
@@ -368,8 +515,11 @@ RETURN FORMAT: Return the result as valid JSON wrapped in <json>...</json> tags,
 
 STRICT OUTPUT VALIDATION RULES:
 - sources must not be empty.
-- Every source must include claim, claimType, sourceTitle, sourceUrl, sourceType, reliabilityScore, and evidenceStatus.
+- Every source must include claim, claimType, sourceTitle, sourceUrl, sourceType, date, reliabilityScore, evidenceStatus, evidenceClass, sourceTier, confidence, needsCrossCheck, and crossCheckStatus.
 - evidenceStatus must be "verified" or "partial" for any source included in the final report.
+- claimType "fact" can only use sourceTier "primary", "professional", or "financial_database".
+- claimType "fact" cannot use evidenceClass "secondary_estimate", "analyst_forecast", "author_inference", or "unverified".
+- Numeric claims must have a date, evidenceClass, sourceTier, confidence, and crossCheckStatus.
 - Do not return any source with evidenceStatus "unsupported"; unsupported items belong only in dataGaps.
 - Final Industry Conclusion must only summarize verified or partial evidence already listed in sources.`;
 }

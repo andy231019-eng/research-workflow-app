@@ -4,10 +4,9 @@ import {
   formatAnthropicError,
   getApiKeyDiagnostics,
   getFirstTextBlock,
-  isRetryableGenerationError,
   resolveAnthropicApiKey,
 } from "@/lib/anthropic";
-import { buildFrameworkPrompt } from "@/lib/prompts/industryResearchPrompts";
+import { buildFrameworkOutlinePrompt } from "@/lib/prompts/industryResearchPrompts";
 import { generateId, tryParseJson } from "@/lib/utils";
 import type { UserResearchInput, ResearchFramework } from "@/types/research";
 
@@ -15,17 +14,59 @@ interface RequestBody extends UserResearchInput {
   apiKey?: string;
 }
 
-function ensurePageIds(framework: ResearchFramework): ResearchFramework {
+type FrameworkOutlineResponse = Partial<Omit<ResearchFramework, "pages">> & {
+  pages?: Array<Partial<ResearchFramework["pages"][number]>>;
+};
+
+function emptyIndustryDefinition(): ResearchFramework["industryDefinition"] {
   return {
-    ...framework,
+    included: [],
+    excluded: [],
+    valueChain: {
+      upstream: [],
+      midstream: [],
+      downstream: [],
+    },
+    coreNatureOneLiner: "",
+    framingNotes: [],
+  };
+}
+
+function emptyPlayers(): ResearchFramework["possiblePlayers"] {
+  return {
+    leaders: [],
+    challengers: [],
+    disruptors: [],
+    commodityPlayers: [],
+  };
+}
+
+function normalizeFramework(
+  framework: FrameworkOutlineResponse,
+  input: UserResearchInput
+): ResearchFramework {
+  return {
+    projectTitle: framework.projectTitle || `${input.industryName}研究架構`,
+    industryName: framework.industryName || input.industryName,
+    geography: framework.geography || input.geographies.join("、") || "全球",
+    analysisPurpose: framework.analysisPurpose || input.analysisPurpose,
+    timeHorizon: framework.timeHorizon || input.timeHorizon,
+    industryDefinition: framework.industryDefinition ?? emptyIndustryDefinition(),
+    possiblePlayers: framework.possiblePlayers ?? emptyPlayers(),
+    dataGapsToResolve: framework.dataGapsToResolve ?? [],
     pages: (framework.pages ?? []).map((p, i) => ({
-      ...p,
       id: p.id || generateId(),
+      pageTitle: p.pageTitle || `研究頁面 ${i + 1}`,
       pageNumber: p.pageNumber ?? i + 1,
+      coreQuestion: p.coreQuestion || "",
+      mainMessageHypothesis: p.mainMessageHypothesis || "",
       requiredData: p.requiredData ?? [],
       evidenceNeeded: p.evidenceNeeded ?? [],
       suggestedSources: p.suggestedSources ?? [],
+      suggestedVisual: p.suggestedVisual ?? "",
+      analysisAngle: p.analysisAngle ?? "",
       mustAnswer: p.mustAnswer ?? [],
+      detailStatus: p.detailStatus ?? "outline",
     })),
   };
 }
@@ -104,94 +145,65 @@ export async function POST(req: Request) {
     );
   }
 
-  const prompt = buildFrameworkPrompt(input as UserResearchInput);
-  let lastError = "";
+  const prompt = buildFrameworkOutlinePrompt(input as UserResearchInput);
 
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    try {
-      const attemptStartedAt = Date.now();
-      const retryNote =
-        attempt > 1
-          ? "\n\nPrevious attempt failed: " + lastError + "\nReturn ONLY valid JSON matching the schema. No markdown fences."
-          : "";
+  try {
+    const attemptStartedAt = Date.now();
 
-      console.info(`[generate-framework:${requestId}] Claude call started`, {
-        attempt,
-        totalAttempts: 2,
-      });
+    console.info(`[generate-framework:${requestId}] Claude outline call started`);
 
-      const message = await createAnthropicMessage(resolvedApiKey, {
-        model: "claude-sonnet-4-6",
-        max_tokens: 12000,
-        messages: [{ role: "user", content: prompt + retryNote }],
-      });
+    const message = await createAnthropicMessage(resolvedApiKey, {
+      model: "claude-sonnet-4-6",
+      max_tokens: 3000,
+      temperature: 0.2,
+      messages: [{ role: "user", content: prompt }],
+    });
 
-      console.info(`[generate-framework:${requestId}] Claude call completed`, {
-        attempt,
-        durationMs: durationMs(attemptStartedAt),
-      });
+    console.info(`[generate-framework:${requestId}] Claude outline call completed`, {
+      durationMs: durationMs(attemptStartedAt),
+      usage: (message as { usage?: unknown }).usage,
+      stopReason: (message as { stop_reason?: unknown }).stop_reason,
+    });
 
-      const raw = getFirstTextBlock(message);
-      const parsed = tryParseJson<ResearchFramework>(raw);
+    const raw = getFirstTextBlock(message);
+    const parsed = tryParseJson<FrameworkOutlineResponse>(raw);
 
-      if (!parsed) {
-        lastError = "Claude 回傳內容不是可解析的研究架構 JSON";
-        console.warn(`[generate-framework:${requestId}] JSON parse failed`, {
-          attempt,
-          responseLength: raw.length,
-          durationMs: durationMs(startedAt),
-        });
-        continue;
-      }
-
-      const withIds = ensurePageIds(parsed);
-      const validationError = validateFramework(withIds);
-
-      if (validationError) {
-        lastError = "Claude 回傳的研究架構未通過驗證：" + validationError;
-        console.warn(`[generate-framework:${requestId}] validation failed`, {
-          attempt,
-          validationError,
-          durationMs: durationMs(startedAt),
-        });
-        continue;
-      }
-
-      console.info(`[generate-framework:${requestId}] succeeded`, {
-        attempt,
-        pages: withIds.pages.length,
+    if (!parsed) {
+      console.warn(`[generate-framework:${requestId}] JSON parse failed`, {
+        responseLength: raw.length,
         durationMs: durationMs(startedAt),
       });
-      return NextResponse.json(withIds);
-    } catch (err) {
-      lastError = formatAnthropicError(err);
-      console.error(`[generate-framework:${requestId}] attempt failed`, {
-        attempt,
-        durationMs: durationMs(startedAt),
-        error: lastError,
-        details: errorDetails(err),
-      });
-      if (attempt === 2 || !isRetryableGenerationError(err)) {
-        console.error(`[generate-framework:${requestId}] failed`, {
-          durationMs: durationMs(startedAt),
-          error: lastError,
-        });
-        return jsonError(
-          "Framework generation failed: " + (lastError || "No detailed error was captured."),
-          500,
-          requestId
-        );
-      }
+      return jsonError("Claude 回傳內容不是可解析的研究架構 JSON", 500, requestId);
     }
-  }
 
-  console.error(`[generate-framework:${requestId}] failed`, {
-    durationMs: durationMs(startedAt),
-    error: lastError,
-  });
-  return jsonError(
-    "Framework generation failed: " + (lastError || "No detailed error was captured."),
-    500,
-    requestId
-  );
+    const withIds = normalizeFramework(parsed, input as UserResearchInput);
+    const validationError = validateFramework(withIds);
+
+    if (validationError) {
+      console.warn(`[generate-framework:${requestId}] validation failed`, {
+        validationError,
+        durationMs: durationMs(startedAt),
+      });
+      return jsonError("Claude 回傳的研究架構未通過驗證：" + validationError, 500, requestId);
+    }
+
+    console.info(`[generate-framework:${requestId}] succeeded`, {
+      pages: withIds.pages.length,
+      detailedPages: withIds.pages.filter((p) => p.detailStatus === "detailed").length,
+      durationMs: durationMs(startedAt),
+    });
+    return NextResponse.json(withIds);
+  } catch (err) {
+    const lastError = formatAnthropicError(err);
+    console.error(`[generate-framework:${requestId}] failed`, {
+      durationMs: durationMs(startedAt),
+      error: lastError,
+      details: errorDetails(err),
+    });
+    return jsonError(
+      "Framework outline generation failed: " + (lastError || "No detailed error was captured."),
+      500,
+      requestId
+    );
+  }
 }

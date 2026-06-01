@@ -111,6 +111,7 @@ export interface FrameworkPage {
   suggestedVisual: string;
   analysisAngle: string;
   mustAnswer: string[];
+  detailStatus?: "outline" | "detailed";
 }
 
 export interface ResearchFramework {
@@ -156,6 +157,22 @@ export interface SourceItem {
   date?: string;
   reliabilityScore: 1 | 2 | 3 | 4 | 5;
   evidenceStatus: "verified" | "partial" | "unsupported";
+  evidenceClass?:
+    | "primary_fact"
+    | "secondary_estimate"
+    | "analyst_forecast"
+    | "author_inference"
+    | "unverified";
+  sourceTier?:
+    | "primary"
+    | "professional"
+    | "financial_database"
+    | "media"
+    | "blog_or_forum"
+    | "unknown";
+  confidence?: "high" | "medium" | "low";
+  needsCrossCheck?: boolean;
+  crossCheckStatus?: "matched" | "conflicted" | "not_checked" | "not_found";
   notes?: string;
 }
 
@@ -174,11 +191,22 @@ export interface GeneratedReport {
 
 export type AppPhase =
   | "input"
+  | "generating_subcategories"
+  | "selecting_subcategory"
+  | "input_details"
   | "generating_framework"
   | "reviewing_framework"
   | "generating_report"
   | "report_ready"
   | "error";
+
+export interface IndustrySubcategory {
+  id: string;
+  name: string;
+  nameEn: string;
+  description: string;
+  examples: string[];
+}
 
 export interface FocusAreaMeta {
   id: FocusArea;

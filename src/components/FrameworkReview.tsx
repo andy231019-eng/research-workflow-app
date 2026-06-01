@@ -10,6 +10,9 @@ interface Props {
   selectedFocusAreas: FocusArea[];
   onConfirm: () => void;
   onRegenerate: (feedback?: string) => void;
+  onEnrichDetails?: () => void;
+  isEnrichingDetails?: boolean;
+  detailError?: string;
 }
 
 // ── Tag badge ─────────────────────────────────────────────────────────────────
@@ -99,6 +102,13 @@ function PageCard({
 }) {
   const [open, setOpen] = useState(false);
   const hasComment = comment.trim().length > 0;
+  const isDetailed = page.detailStatus === "detailed";
+  const hasDetails =
+    page.requiredData.length > 0 ||
+    page.evidenceNeeded.length > 0 ||
+    page.suggestedSources.length > 0 ||
+    page.mustAnswer.length > 0 ||
+    Boolean(page.analysisAngle);
 
   return (
     <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
@@ -112,6 +122,9 @@ function PageCard({
           {page.pageNumber}
         </span>
         <span className="flex-1 text-sm font-semibold text-gray-900">{page.pageTitle}</span>
+        <Tag color={isDetailed ? "emerald" : "gray"}>
+          {isDetailed ? "已補細節" : "大綱"}
+        </Tag>
         {hasComment && (
           <MessageSquare size={13} className="text-blue-500 shrink-0" />
         )}
@@ -137,6 +150,13 @@ function PageCard({
       {/* Expanded detail */}
       {open && (
         <div className="border-t border-gray-100 px-4 pb-4 pt-3 space-y-4 bg-gray-50/50">
+          {!hasDetails && (
+            <div className="bg-white border border-dashed border-gray-200 rounded-lg px-3 py-3">
+              <p className="text-xs text-gray-500">
+                這一頁目前是輕量大綱。可先確認方向，也可以使用下方「補齊下一批細節」加入需要的數據、Evidence、建議來源與必答問題。
+              </p>
+            </div>
+          )}
           <div className="grid gap-4 sm:grid-cols-2">
             {page.requiredData.length > 0 && (
               <div>
@@ -239,6 +259,9 @@ export default function FrameworkReview({
   selectedFocusAreas,
   onConfirm,
   onRegenerate,
+  onEnrichDetails,
+  isEnrichingDetails = false,
+  detailError = "",
 }: Props) {
   const [pageComments, setPageComments] = useState<Record<string, string>>({});
   const [overallComment, setOverallComment] = useState("");
@@ -248,6 +271,8 @@ export default function FrameworkReview({
 
   const totalComments = Object.values(pageComments).filter((c) => c.trim()).length
     + (overallComment.trim() ? 1 : 0);
+  const detailedPages = framework.pages.filter((page) => page.detailStatus === "detailed").length;
+  const allPagesDetailed = detailedPages >= framework.pages.length;
 
   const compileFeedback = (): string => {
     const parts: string[] = [];
@@ -278,8 +303,39 @@ export default function FrameworkReview({
           <Tag color="gray">{framework.geography}</Tag>
           <Tag color="gray">{framework.analysisPurpose}</Tag>
           <Tag color="gray">{framework.timeHorizon}</Tag>
+          <Tag color={allPagesDetailed ? "emerald" : "amber"}>
+            已補齊 {detailedPages} / {framework.pages.length} 頁
+          </Tag>
         </div>
       </div>
+
+      {onEnrichDetails && (
+        <div className="bg-white border border-gray-200 rounded-xl p-5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-semibold text-gray-900">漸進式細節補齊</p>
+              <p className="text-xs text-gray-500 mt-1">
+                目前已補齊 {detailedPages} / {framework.pages.length} 頁。你可以先直接開始研究，也可以每次補 2–3 頁細節。
+              </p>
+              {detailError && (
+                <p className="text-xs text-red-600 mt-1">{detailError}</p>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={onEnrichDetails}
+              disabled={isEnrichingDetails || allPagesDetailed}
+              className="border border-gray-200 text-gray-700 px-4 py-2.5 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition"
+            >
+              {allPagesDetailed
+                ? "細節已補齊"
+                : isEnrichingDetails
+                ? "補齊中..."
+                : "補齊下一批細節"}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Industry definition */}
       <Collapse title="產業初步定義" badge={<Tag color="violet">Industry Definition</Tag>} defaultOpen>

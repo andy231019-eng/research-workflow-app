@@ -47,6 +47,36 @@ const EVIDENCE_STATUS_LABEL = {
   unsupported: "未支撐",
 } as const;
 
+const EVIDENCE_CLASS_LABEL = {
+  primary_fact: "一級事實",
+  secondary_estimate: "二手估計",
+  analyst_forecast: "機構預估",
+  author_inference: "作者推論",
+  unverified: "未驗證",
+} as const;
+
+const SOURCE_TIER_LABEL = {
+  primary: "一級來源",
+  professional: "專業機構",
+  financial_database: "財經資料庫",
+  media: "媒體",
+  blog_or_forum: "部落格/論壇",
+  unknown: "未知",
+} as const;
+
+const CONFIDENCE_LABEL = {
+  high: "高",
+  medium: "中",
+  low: "低",
+} as const;
+
+const CROSS_CHECK_STATUS_LABEL = {
+  matched: "已交叉確認",
+  conflicted: "來源衝突",
+  not_checked: "未二次查核",
+  not_found: "找不到原始來源",
+} as const;
+
 function parseMarkdownSections(markdown: string): ReportSection[] {
   const sections: ReportSection[] = [];
   // Split on lines starting with exactly ## (not ### or ####)
@@ -183,13 +213,32 @@ export default function ReportPreview({
   const evidenceStats = report.sources.reduce(
     (acc, source) => {
       const status = source.evidenceStatus ?? "verified";
+      const confidence = source.confidence ?? "medium";
+      const crossCheckStatus = source.crossCheckStatus ?? "not_checked";
       if (status === "verified") acc.verified += 1;
       else if (status === "partial") acc.partial += 1;
       else acc.unsupported += 1;
+      if (confidence === "high") acc.highConfidence += 1;
+      else if (confidence === "medium") acc.mediumConfidence += 1;
+      else acc.lowConfidence += 1;
+      if (crossCheckStatus === "not_checked") acc.notChecked += 1;
+      if (crossCheckStatus === "conflicted") acc.conflicted += 1;
+      if (crossCheckStatus === "not_found") acc.notFound += 1;
       if (source.reliabilityScore <= 2) acc.lowReliability += 1;
       return acc;
     },
-    { verified: 0, partial: 0, unsupported: 0, lowReliability: 0 }
+    {
+      verified: 0,
+      partial: 0,
+      unsupported: 0,
+      highConfidence: 0,
+      mediumConfidence: 0,
+      lowConfidence: 0,
+      notChecked: 0,
+      conflicted: 0,
+      notFound: 0,
+      lowReliability: 0,
+    }
   );
 
   const downloadMeta = {
@@ -288,23 +337,28 @@ export default function ReportPreview({
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
             <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2">
-              <p className="text-base font-bold text-emerald-700">{evidenceStats.verified}</p>
-              <p className="text-[11px] text-emerald-700">已驗證</p>
+              <p className="text-base font-bold text-emerald-700">{evidenceStats.highConfidence}</p>
+              <p className="text-[11px] text-emerald-700">高可信</p>
             </div>
             <div className="rounded-lg border border-yellow-100 bg-yellow-50 px-3 py-2">
-              <p className="text-base font-bold text-yellow-700">{evidenceStats.partial}</p>
-              <p className="text-[11px] text-yellow-700">部分根據</p>
+              <p className="text-base font-bold text-yellow-700">{evidenceStats.mediumConfidence}</p>
+              <p className="text-[11px] text-yellow-700">中可信</p>
             </div>
             <div className="rounded-lg border border-red-100 bg-red-50 px-3 py-2">
-              <p className="text-base font-bold text-red-700">{evidenceStats.unsupported}</p>
-              <p className="text-[11px] text-red-700">未支撐</p>
+              <p className="text-base font-bold text-red-700">{evidenceStats.lowConfidence}</p>
+              <p className="text-[11px] text-red-700">低可信</p>
             </div>
             <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
-              <p className="text-base font-bold text-gray-700">{evidenceStats.lowReliability}</p>
-              <p className="text-[11px] text-gray-600">低可靠度</p>
+              <p className="text-base font-bold text-gray-700">{evidenceStats.notChecked}</p>
+              <p className="text-[11px] text-gray-600">未二次查核</p>
             </div>
           </div>
         </div>
+        {(evidenceStats.conflicted > 0 || evidenceStats.notFound > 0 || evidenceStats.lowReliability > 0) && (
+          <div className="mt-4 border border-red-200 bg-red-50 text-red-800 rounded-lg px-3 py-2 text-sm">
+            警示：{evidenceStats.conflicted} 筆來源衝突、{evidenceStats.notFound} 筆找不到原始來源、{evidenceStats.lowReliability} 筆低可靠度來源。
+          </div>
+        )}
         {report.dataGaps.length > 0 && (
           <div className="mt-4 border border-amber-200 bg-amber-50 text-amber-800 rounded-lg px-3 py-2 text-sm">
             本報告有 {report.dataGaps.length} 個未能驗證或資料不足的問題，已集中列在「資料缺口」。
@@ -387,6 +441,10 @@ export default function ReportPreview({
                   <tr className="bg-gray-50 border-b border-gray-100">
                     <th className="text-left px-4 py-3 font-medium text-gray-600 w-[35%]">Claim</th>
                     <th className="text-left px-4 py-3 font-medium text-gray-600">Claim 類型</th>
+                    <th className="text-left px-4 py-3 font-medium text-gray-600">證據分級</th>
+                    <th className="text-left px-4 py-3 font-medium text-gray-600">來源層級</th>
+                    <th className="text-left px-4 py-3 font-medium text-gray-600">可信度</th>
+                    <th className="text-left px-4 py-3 font-medium text-gray-600">交叉查核</th>
                     <th className="text-left px-4 py-3 font-medium text-gray-600">證據狀態</th>
                     <th className="text-left px-4 py-3 font-medium text-gray-600">來源</th>
                     <th className="text-left px-4 py-3 font-medium text-gray-600">類型</th>
@@ -400,6 +458,48 @@ export default function ReportPreview({
                       <td className="px-4 py-3 text-gray-700">{source.claim}</td>
                       <td className="px-4 py-3 text-gray-500">
                         {CLAIM_TYPE_LABEL[source.claimType ?? "fact"]}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                            (source.evidenceClass ?? "unverified") === "primary_fact"
+                              ? "bg-emerald-50 text-emerald-700"
+                              : (source.evidenceClass ?? "unverified") === "unverified"
+                              ? "bg-red-50 text-red-700"
+                              : "bg-yellow-50 text-yellow-700"
+                          }`}
+                        >
+                          {EVIDENCE_CLASS_LABEL[source.evidenceClass ?? "unverified"]}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-gray-500">
+                        {SOURCE_TIER_LABEL[source.sourceTier ?? "unknown"]}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                            (source.confidence ?? "medium") === "high"
+                              ? "bg-emerald-50 text-emerald-700"
+                              : (source.confidence ?? "medium") === "medium"
+                              ? "bg-yellow-50 text-yellow-700"
+                              : "bg-red-50 text-red-700"
+                          }`}
+                        >
+                          {CONFIDENCE_LABEL[source.confidence ?? "medium"]}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                            (source.crossCheckStatus ?? "not_checked") === "matched"
+                              ? "bg-emerald-50 text-emerald-700"
+                              : (source.crossCheckStatus ?? "not_checked") === "not_checked"
+                              ? "bg-gray-100 text-gray-600"
+                              : "bg-red-50 text-red-700"
+                          }`}
+                        >
+                          {CROSS_CHECK_STATUS_LABEL[source.crossCheckStatus ?? "not_checked"]}
+                        </span>
                       </td>
                       <td className="px-4 py-3">
                         <span

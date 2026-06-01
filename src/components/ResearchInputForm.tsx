@@ -259,6 +259,9 @@ interface Props {
   onApiKeyChange: (key: string) => void;
   onMockModeChange: (mock: boolean) => void;
   onSubmit: (input: UserResearchInput) => void;
+  lockedIndustry?: string;
+  lockedGeographies?: Geography[];
+  lockedGeographyOther?: string;
 }
 
 export default function ResearchInputForm({
@@ -267,8 +270,22 @@ export default function ResearchInputForm({
   onApiKeyChange,
   onMockModeChange,
   onSubmit,
+  lockedIndustry,
+  lockedGeographies,
+  lockedGeographyOther,
 }: Props) {
-  const [input, setInput] = useState<UserResearchInput>(INITIAL_INPUT);
+  const lockedMode = Boolean(lockedIndustry);
+
+  const effectiveInitial: UserResearchInput = lockedMode
+    ? {
+        ...INITIAL_INPUT,
+        industryName: lockedIndustry ?? "",
+        geographies: lockedGeographies ?? ["global"],
+        geographyOther: lockedGeographyOther ?? "",
+      }
+    : INITIAL_INPUT;
+
+  const [input, setInput] = useState<UserResearchInput>(effectiveInitial);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const update = (patch: Partial<UserResearchInput>) => {
@@ -283,10 +300,12 @@ export default function ResearchInputForm({
 
   const validate = (): boolean => {
     const errs: Record<string, string> = {};
-    if (!input.industryName.trim()) errs.industryName = "請輸入產業名稱";
-    if (input.geographies.length === 0) errs.geographies = "請至少選擇一個地理範圍";
-    if (input.geographies.includes("other") && !input.geographyOther?.trim()) {
-      errs.geographyOther = "請輸入地理範圍";
+    if (!lockedMode) {
+      if (!input.industryName.trim()) errs.industryName = "請輸入產業名稱";
+      if (input.geographies.length === 0) errs.geographies = "請至少選擇一個地理範圍";
+      if (input.geographies.includes("other") && !input.geographyOther?.trim()) {
+        errs.geographyOther = "請輸入地理範圍";
+      }
     }
     if (input.selectedFocusAreas.length === 0) errs.focusAreas = "請至少勾選一個分析重點";
     if (input.analysisPurpose === "other" && !input.analysisPurposeOther?.trim()) {
@@ -310,115 +329,68 @@ export default function ResearchInputForm({
 
   return (
     <div className="space-y-5">
-      {/* API Key + Mock Mode panel */}
-      <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm font-semibold text-gray-800">API 設定</p>
-            <p className="text-xs text-gray-500 mt-0.5">輸入 Anthropic API Key，或開啟 Mock 模式體驗完整流程</p>
-          </div>
-          <button
-            type="button"
-            onClick={() => onMockModeChange(!mockMode)}
-            className={`flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition ${
-              mockMode
-                ? "border-amber-300 bg-amber-50 text-amber-800"
-                : "border-gray-200 bg-white text-gray-600 hover:border-gray-400"
-            }`}
-          >
-            <span
-              className={`w-8 h-4 rounded-full transition-colors flex items-center ${
-                mockMode ? "bg-amber-400" : "bg-gray-200"
-              }`}
-            >
-              <span
-                className={`w-3 h-3 rounded-full bg-white shadow transition-transform mx-0.5 ${
-                  mockMode ? "translate-x-4" : "translate-x-0"
-                }`}
-              />
-            </span>
-            Mock 模式{mockMode ? "（已開啟）" : ""}
-          </button>
-        </div>
-
-        {mockMode ? (
-          <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-800">
-            Mock 模式已開啟：系統將使用預設 AI 伺服器產業的示範資料，讓你體驗完整流程，不會消耗 API 用量。
-          </div>
-        ) : (
-          <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1.5">
-              Anthropic API Key
-              <span className="ml-1 font-normal text-gray-400">（輸入後僅在本次 session 使用，不會儲存）</span>
-            </label>
-            <input
-              type="password"
-              className={`w-full border rounded-lg px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-gray-900/10 transition ${
-                apiKey
-                  ? "border-emerald-300 bg-emerald-50/30"
-                  : "border-gray-200 bg-white"
-              }`}
-              placeholder="sk-ant-api03-..."
-              value={apiKey}
-              onChange={(e) => onApiKeyChange(e.target.value)}
-              autoComplete="off"
-            />
-            {apiKey && (
-              <p className="text-xs text-emerald-600 mt-1">✓ API Key 已設定</p>
-            )}
-            {!apiKey && (
-              <p className="text-xs text-gray-400 mt-1">
-                沒有 API Key？請至{" "}
-                <span className="text-gray-600 font-medium">console.anthropic.com</span>{" "}
-                取得，或改用 Mock 模式體驗流程。
-              </p>
-            )}
-          </div>
-        )}
-      </div>
-
       {/* Hero */}
       <div className="bg-white border border-gray-200 rounded-xl p-6">
-        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Step 1</p>
-        <h2 className="text-xl font-bold text-gray-900">建立產業研究任務</h2>
+        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Step 2</p>
+        <h2 className="text-xl font-bold text-gray-900">設定研究需求</h2>
         <p className="text-sm text-gray-500 mt-1">
-          設定研究需求 → Claude 產生研究架構 → 確認架構後生成完整 Markdown 報告
+          選擇分析目的與研究重點 → Claude 產生研究架構 → 確認架構後生成完整報告
         </p>
       </div>
 
+      {/* Locked industry summary */}
+      {lockedMode && (
+        <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 flex items-center gap-3">
+          <div className="w-8 h-8 rounded-full bg-gray-900 flex items-center justify-center shrink-0">
+            <svg className="w-4 h-4 text-white" viewBox="0 0 16 16" fill="none">
+              <path d="M3 8l3.5 3.5 6.5-7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs text-gray-500 font-medium">已選定研究產業</p>
+            <p className="text-sm font-semibold text-gray-900 truncate">{lockedIndustry}</p>
+            <p className="text-xs text-gray-400">{geoLabel}</p>
+          </div>
+        </div>
+      )}
+
       {/* Core input */}
       <Section title="基本資訊" helper="定義這次要分析的產業與研究目的">
-        <Question label="你想分析的產業是什麼？" required error={errors.industryName}>
-          <input
-            className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900/10 focus:border-gray-400"
-            placeholder="例如：日本 PE 產業、AI 伺服器產業、台灣高爾夫球頭製造業、企業 SaaS 產業"
-            value={input.industryName}
-            onChange={(e) => update({ industryName: e.target.value })}
-          />
-        </Question>
-
-        <Question label="地理範圍" helper="可複選多個地區；選擇全球時不可同時選其他地區" error={errors.geographies}>
-          <GeographyMultiSelect
-            values={input.geographies}
-            onChange={(v) => update({ geographies: v })}
-          />
-          {input.geographies.includes("other") && (
-            <div className="mt-2">
+        {!lockedMode && (
+          <>
+            <Question label="你想分析的產業是什麼？" required error={errors.industryName}>
               <input
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900/10"
-                placeholder="請輸入地理範圍"
-                value={input.geographyOther ?? ""}
-                onChange={(e) => update({ geographyOther: e.target.value })}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900/10 focus:border-gray-400"
+                placeholder="例如：日本 PE 產業、AI 伺服器產業、台灣高爾夫球頭製造業、企業 SaaS 產業"
+                value={input.industryName}
+                onChange={(e) => update({ industryName: e.target.value })}
               />
-              {errors.geographyOther && (
-                <p className="text-xs text-red-600 mt-1">{errors.geographyOther}</p>
+            </Question>
+
+            <Question label="地理範圍" helper="可複選多個地區；選擇全球時不可同時選其他地區" error={errors.geographies}>
+              <GeographyMultiSelect
+                values={input.geographies}
+                onChange={(v) => update({ geographies: v })}
+              />
+              {input.geographies.includes("other") && (
+                <div className="mt-2">
+                  <input
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900/10"
+                    placeholder="請輸入地理範圍"
+                    value={input.geographyOther ?? ""}
+                    onChange={(e) => update({ geographyOther: e.target.value })}
+                  />
+                  {errors.geographyOther && (
+                    <p className="text-xs text-red-600 mt-1">{errors.geographyOther}</p>
+                  )}
+                </div>
               )}
-            </div>
-          )}
-          {input.geographies.length > 0 && (
-            <p className="text-xs text-gray-400 mt-1.5">已選：{geoLabel}</p>
-          )}
-        </Question>
+              {input.geographies.length > 0 && (
+                <p className="text-xs text-gray-400 mt-1.5">已選：{geoLabel}</p>
+              )}
+            </Question>
+          </>
+        )}
 
         <Question label="分析目的" helper="選擇後系統自動推薦分析重點與搜尋深度">
           <PurposeCards value={input.analysisPurpose} onChange={handlePurposeChange} />
