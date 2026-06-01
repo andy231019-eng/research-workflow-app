@@ -15,6 +15,10 @@ interface RequestBody {
 }
 
 const NEWLINE = "\n";
+const URL_PATTERN = /^https?:\/\/\S+\.\S+/i;
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const NUMERIC_CLAIM_PATTERN =
+  /(\d[\d,]*(?:\.\d+)?\s?(?:%|％|億|兆|萬|千|百|元|美元|日圓|韓元|台幣|新台幣|k|K|m|M|bn|billion|million|兆元|億元)|EPS|CAGR|capex|CapEx|產能|市佔|毛利率|營益率|淨利|營收|供需|月產|wafers?)/i;
 
 function makeSSELine(type: string, data: Record<string, unknown>): string {
   return "data: " + JSON.stringify({ type, ...data }) + NEWLINE + NEWLINE;
@@ -35,59 +39,6 @@ type ParsedReport = {
   dataGaps?: string[];
 };
 
-const SOURCE_TYPES = new Set<SourceItem["sourceType"]>([
-  "official",
-  "company",
-  "industry_report",
-  "market_data",
-  "media",
-  "community",
-  "other",
-]);
-
-const CLAIM_TYPES = new Set<SourceItem["claimType"]>(["fact", "inference", "judgment"]);
-const EVIDENCE_STATUSES = new Set<SourceItem["evidenceStatus"]>([
-  "verified",
-  "partial",
-  "unsupported",
-]);
-const EVIDENCE_CLASSES = new Set<NonNullable<SourceItem["evidenceClass"]>>([
-  "primary_fact",
-  "secondary_estimate",
-  "analyst_forecast",
-  "author_inference",
-  "unverified",
-]);
-const SOURCE_TIERS = new Set<NonNullable<SourceItem["sourceTier"]>>([
-  "primary",
-  "professional",
-  "financial_database",
-  "media",
-  "blog_or_forum",
-  "unknown",
-]);
-const CONFIDENCE_LEVELS = new Set<NonNullable<SourceItem["confidence"]>>([
-  "high",
-  "medium",
-  "low",
-]);
-const CROSS_CHECK_STATUSES = new Set<NonNullable<SourceItem["crossCheckStatus"]>>([
-  "matched",
-  "conflicted",
-  "not_checked",
-  "not_found",
-]);
-const FACT_ALLOWED_TIERS = new Set<NonNullable<SourceItem["sourceTier"]>>([
-  "primary",
-  "professional",
-  "financial_database",
-]);
-const FACT_ALLOWED_CLASSES = new Set<NonNullable<SourceItem["evidenceClass"]>>([
-  "primary_fact",
-]);
-const NUMERIC_CLAIM_PATTERN =
-  /(\d[\d,]*(?:\.\d+)?\s?(?:%|％|億|兆|萬|千|百|元|美元|日圓|韓元|台幣|新台幣|k|K|m|M|bn|billion|million|兆元|億元)|EPS|CAGR|capex|CapEx|產能|市佔|毛利率|營益率|淨利|營收|供需|月產|wafers?)/i;
-
 function validateStrictReport(parsed: ParsedReport | null): string[] {
   const errors: string[] = [];
 
@@ -101,53 +52,19 @@ function validateStrictReport(parsed: ParsedReport | null): string[] {
   for (const [index, source] of (parsed.sources ?? []).entries()) {
     const prefix = `sources[${index}]`;
     if (!source.claim?.trim()) errors.push(`${prefix} missing claim`);
-    if (!CLAIM_TYPES.has(source.claimType)) errors.push(`${prefix} has invalid claimType`);
     if (!source.sourceTitle?.trim()) errors.push(`${prefix} missing sourceTitle`);
     if (!source.sourceUrl?.trim()) errors.push(`${prefix} missing sourceUrl`);
-    if (!SOURCE_TYPES.has(source.sourceType)) errors.push(`${prefix} has invalid sourceType`);
-    if (
-      typeof source.reliabilityScore !== "number" ||
-      source.reliabilityScore < 1 ||
-      source.reliabilityScore > 5
-    ) {
-      errors.push(`${prefix} has invalid reliabilityScore`);
+    if (!source.sourceType?.trim()) errors.push(`${prefix} missing sourceType`);
+    if (!source.date?.trim()) errors.push(`${prefix} missing date`);
+    if (source.sourceUrl && !URL_PATTERN.test(source.sourceUrl)) {
+      errors.push(`${prefix} sourceUrl must be an http(s) URL`);
     }
-    if (!EVIDENCE_STATUSES.has(source.evidenceStatus)) {
-      errors.push(`${prefix} has invalid evidenceStatus`);
-    }
-    if (!source.evidenceClass || !EVIDENCE_CLASSES.has(source.evidenceClass)) {
-      errors.push(`${prefix} has invalid evidenceClass`);
-    }
-    if (!source.sourceTier || !SOURCE_TIERS.has(source.sourceTier)) {
-      errors.push(`${prefix} has invalid sourceTier`);
-    }
-    if (!source.confidence || !CONFIDENCE_LEVELS.has(source.confidence)) {
-      errors.push(`${prefix} has invalid confidence`);
-    }
-    if (typeof source.needsCrossCheck !== "boolean") {
-      errors.push(`${prefix} missing needsCrossCheck boolean`);
-    }
-    if (!source.crossCheckStatus || !CROSS_CHECK_STATUSES.has(source.crossCheckStatus)) {
-      errors.push(`${prefix} has invalid crossCheckStatus`);
-    }
-    if (source.evidenceStatus === "unsupported") {
-      errors.push(`${prefix} is unsupported; unsupported claims must be moved to dataGaps`);
-    }
-    if (
-      source.claimType === "fact" &&
-      (!source.sourceTier ||
-        !FACT_ALLOWED_TIERS.has(source.sourceTier) ||
-        !source.evidenceClass ||
-        !FACT_ALLOWED_CLASSES.has(source.evidenceClass))
-    ) {
-      errors.push(`${prefix} fact claims require primary_fact evidence from primary/professional/financial_database tiers`);
+    if (source.date && !DATE_PATTERN.test(source.date)) {
+      errors.push(`${prefix} date must be yyyy-mm-dd`);
     }
     if (NUMERIC_CLAIM_PATTERN.test(source.claim)) {
       if (!source.date?.trim()) errors.push(`${prefix} numeric claim missing date`);
-      if (!source.evidenceClass) errors.push(`${prefix} numeric claim missing evidenceClass`);
-      if (!source.sourceTier) errors.push(`${prefix} numeric claim missing sourceTier`);
-      if (!source.confidence) errors.push(`${prefix} numeric claim missing confidence`);
-      if (!source.crossCheckStatus) errors.push(`${prefix} numeric claim missing crossCheckStatus`);
+      if (!source.sourceUrl?.trim()) errors.push(`${prefix} numeric claim missing sourceUrl`);
     }
   }
 
@@ -156,44 +73,38 @@ function validateStrictReport(parsed: ParsedReport | null): string[] {
 
 function findHighRiskSources(sources: SourceItem[]): SourceItem[] {
   return sources
-    .filter(
-      (source) =>
-        source.needsCrossCheck ||
-        source.crossCheckStatus === "not_checked" ||
-        source.crossCheckStatus === "conflicted" ||
-        source.crossCheckStatus === "not_found" ||
-        NUMERIC_CLAIM_PATTERN.test(source.claim)
-    )
+    .filter((source) => NUMERIC_CLAIM_PATTERN.test(source.claim) || !URL_PATTERN.test(source.sourceUrl))
     .slice(0, 12);
 }
 
 function makeAuditPrompt(report: ParsedReport, highRiskSources: SourceItem[]): string {
   return `You are a strict investment committee fact-check reviewer.
 
-TASK: Audit ONLY high-risk numeric and source-tier claims in the report. Do not rewrite the analysis style. Fix evidence labeling, downgrade over-claimed facts, and add data gaps for unresolved conflicts.
+TASK: Audit ONLY high-risk numeric claims and source links in the report. Do not rewrite the analysis style. Fix source bullets, remove unsupported numbers, and add data gaps for unresolved conflicts.
 
 HIGH-RISK CLAIMS TO CHECK:
 ${highRiskSources
   .map(
     (source, index) => `${index + 1}. Claim: ${source.claim}
 Source: ${source.sourceTitle} (${source.sourceUrl})
-sourceTier=${source.sourceTier}; evidenceClass=${source.evidenceClass}; confidence=${source.confidence}; crossCheckStatus=${source.crossCheckStatus}`
+Type=${source.sourceType}; Date=${source.date}`
   )
   .join("\n\n")}
 
 AUDIT RULES:
-- If a numeric claim is from media, blog/forum, unknown tier, or a second-hand repost, it cannot be a Fact. Downgrade it to Estimate or Data Gap.
-- If a future EPS, margin, capacity, market share, TAM, CAGR, target price, or supply/demand number comes from broker/model/market research, use evidenceClass "analyst_forecast" or "secondary_estimate", not "primary_fact".
-- If sources conflict, use conservative ranges in markdown and set crossCheckStatus "conflicted".
-- If an original source cannot be found, set crossCheckStatus "not_found" and confidence "low".
-- Keep unsupported/unverified claims out of Final Industry Conclusion.
+- Every source must include only claim, sourceTitle, sourceUrl, sourceType, and date.
+- sourceUrl must be a real http(s) link, not a fabricated slug.
+- date must be yyyy-mm-dd.
+- Every markdown section must include "### Sources / 資料來源" with bullets formatted exactly as: - [Title](URL) — Type — yyyy-mm-dd
+- If sources conflict, use conservative ranges in markdown or move the claim to Data Gaps.
+- Keep unsupported claims out of Final Industry Conclusion.
 - Preserve valid sections, but change wording where it is too certain.
 
 Return ONLY valid JSON wrapped in <json>...</json> tags using the same schema:
 {
   "title": "string",
   "markdown": "audited markdown",
-  "sources": [same source objects with corrected evidenceClass/sourceTier/confidence/crossCheckStatus/notes],
+  "sources": [{"claim":"string","sourceTitle":"string","sourceUrl":"https://...","sourceType":"string","date":"yyyy-mm-dd"}],
   "dataGaps": ["string"]
 }
 
@@ -209,9 +120,10 @@ ${errors.map((e) => `- ${e}`).join("\n")}
 
 Rewrite the report and return ONLY valid JSON. Do not include unsupported sources.
 Move every unsupported or insufficiently sourced claim to dataGaps.
-Every source must include evidenceClass, sourceTier, confidence, needsCrossCheck, and crossCheckStatus.
-Do not label media, broker forecasts, market research estimates, or second-hand numeric claims as claimType=fact.
-The report body, especially Fact/Judgment/Final Industry Conclusion, must only use verified or clearly partial evidence listed in sources.`;
+Every source must include only claim, sourceTitle, sourceUrl, sourceType, and date.
+Every sourceUrl must start with http:// or https://.
+Every date must be yyyy-mm-dd.
+Every report section must include "### Sources / 資料來源" bullets using: - [Title](URL) — Type — yyyy-mm-dd.`;
 }
 
 export async function POST(req: Request) {
@@ -283,7 +195,7 @@ export async function POST(req: Request) {
 
         send("status", {
           ...progressStatus(
-            `正在針對 ${highRiskSources.length} 個高風險數字與來源層級做二次審核...`,
+            `正在針對 ${highRiskSources.length} 個高風險數字與來源連結做二次審核...`,
             82,
             "audit"
           ),
@@ -349,8 +261,8 @@ export async function POST(req: Request) {
           send("status", {
             ...progressStatus(
               attempt === 1
-                ? "Claude 正在搜尋最新資料並撰寫研究報告，完成後會先進行可信度檢查..."
-                : "第一次可信度檢查未通過，Claude 正在補強來源並重寫未驗證內容...",
+                ? "Claude 正在搜尋最新資料並撰寫研究報告，完成後會檢查來源連結格式..."
+                : "第一次來源格式檢查未通過，Claude 正在補強來源並重寫不足內容...",
               attempt === 1 ? 12 : 62,
               attempt === 1 ? "research_write" : "rewrite"
             ),

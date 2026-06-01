@@ -156,7 +156,7 @@ function reportPhaseLabel(phase: string): string {
     research_write: "搜尋資料並撰寫",
     fallback: "切換純模型模式",
     rewrite: "補強來源與重寫",
-    validation: "檢查證據分級",
+    validation: "檢查來源格式",
     audit: "二次審核關鍵數字",
     audit_warning: "整理審核提醒",
     finalize: "整理最終報告",

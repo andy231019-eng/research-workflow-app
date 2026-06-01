@@ -143,33 +143,15 @@ export interface ResearchFramework {
 
 export interface SourceItem {
   claim: string;
-  claimType: "fact" | "inference" | "judgment";
   sourceTitle: string;
   sourceUrl: string;
-  sourceType:
-    | "official"
-    | "company"
-    | "industry_report"
-    | "market_data"
-    | "media"
-    | "community"
-    | "other";
-  date?: string;
-  reliabilityScore: 1 | 2 | 3 | 4 | 5;
-  evidenceStatus: "verified" | "partial" | "unsupported";
-  evidenceClass?:
-    | "primary_fact"
-    | "secondary_estimate"
-    | "analyst_forecast"
-    | "author_inference"
-    | "unverified";
-  sourceTier?:
-    | "primary"
-    | "professional"
-    | "financial_database"
-    | "media"
-    | "blog_or_forum"
-    | "unknown";
+  sourceType: string;
+  date: string;
+  claimType?: "fact" | "inference" | "judgment";
+  reliabilityScore?: 1 | 2 | 3 | 4 | 5;
+  evidenceStatus?: "verified" | "partial" | "unsupported";
+  evidenceClass?: "primary_fact" | "secondary_estimate" | "analyst_forecast" | "author_inference" | "unverified";
+  sourceTier?: "primary" | "professional" | "financial_database" | "media" | "blog_or_forum" | "unknown";
   confidence?: "high" | "medium" | "low";
   needsCrossCheck?: boolean;
   crossCheckStatus?: "matched" | "conflicted" | "not_checked" | "not_found";
@@ -322,7 +304,7 @@ export const ALL_FOCUS_AREAS: FocusAreaMeta[] = [
     id: "supporting_facts_sources",
     label: "支撐資料與來源",
     labelEn: "Supporting Facts & Sources",
-    description: "列出每個重要 claim 的來源、可靠度與資料缺口",
+    description: "列出每個重要 claim 的來源連結、類型、日期與資料缺口",
   },
 ];
 

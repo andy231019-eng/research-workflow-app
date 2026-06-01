@@ -379,12 +379,14 @@ CRITICAL RULES:
 - Every important claim MUST have a source and a matching entry in the JSON sources array.
 - Every number, ranking, market size, growth rate, company financial, regulation, share, valuation, and dated fact MUST have a source.
 - Do NOT invent sources. Do NOT invent exact market size numbers if not found.
+- Every source URL must be a real direct http(s) link from web search results or a known official/public source page. Do not fabricate URL slugs.
+- Source dates must be formatted as yyyy-mm-dd. If only month is known, use yyyy-mm-01. If only year is known, use yyyy-01-01.
 - If public data is limited, clearly state: "目前公開資料有限，無法可靠判斷。"
 - Distinguish primary-source facts, estimates/forecasts, author inference, and judgment. Mark inferences clearly and state which sourced facts support them.
-- The Fact section can ONLY contain primary facts or high-confidence professional/financial database evidence. Broker models, market research estimates, media second-hand reports, blogs, and author reasoning MUST NOT appear under Fact.
+- The Fact section can ONLY contain primary facts or professional/financial database evidence with clear source links. Broker models, market research estimates, media second-hand reports, blogs, and author reasoning MUST NOT appear under Fact.
 - Broker EPS/GM forecasts, target prices, future margin assumptions, market share forecasts, capacity forecasts, supply/demand gap estimates, and TAM/CAGR estimates must be labeled as Estimate / 機構或二手估計.
 - Author causal claims, winner/loser views, "structural not cyclical" claims, and competitive timing assumptions must be labeled as Inference / 作者推論.
-- If a source is a media repost of a broker or industry rumor and no original PDF/official disclosure is found, set evidenceClass to secondary_estimate or unverified, not primary_fact.
+- If a source is a media repost of a broker or industry rumor and no original PDF/official disclosure is found, label it in the prose as an estimate or unverified item and move it to Data Gaps if it is material.
 - For conflicting figures, report a conservative range or say sources conflict. Do not choose the most optimistic single number.
 - Unsupported claims MUST NOT appear in Fact, Judgment, So What, or Final Industry Conclusion. Move them to Data Gaps instead.
 - The JSON sources array MUST contain only verified or partial evidence. If a claim would be unsupported, omit it from the report body and add it to dataGaps.
@@ -432,7 +434,7 @@ REQUIRED MARKDOWN REPORT STRUCTURE:
 ## [pageNumber]. [pageTitle]
 
 ### Fact / 一級來源事實
-[Only primary-source facts or high-confidence professional/financial database evidence]
+[Only primary-source facts or professional/financial database evidence with direct source links]
 
 ### Estimate / 機構或二手估計
 [Broker, market research, media-transcribed, or database estimates. Mark clearly as estimates.]
@@ -449,8 +451,11 @@ REQUIRED MARKDOWN REPORT STRUCTURE:
 ### Suggested Visual
 [Description of chart/table that would best show this]
 
-### Sources
-- [Title](URL) — [Source Type] — [Date] — Reliability: [1-5]
+### Sources / 資料來源
+- [Source title](https://...) — Source Type — yyyy-mm-dd
+
+Every section MUST include a Sources / 資料來源 block with 2-5 source bullets. Use this exact source format:
+- [Digitimes：Semco's 2026 ABF capacity is fully booked](https://www.digitimes.com/news/a20251124PD204/semco-capacity-2026-abf-substrate-demand.html) — Industry Media — 2025-11-24
 
 ---
 
@@ -465,8 +470,8 @@ REQUIRED MARKDOWN REPORT STRUCTURE:
 
 ## Supporting Facts & Sources 支撐資料與來源
 
-| Claim | Claim Type | Evidence Class | Source Tier | Confidence | Cross-check | Evidence Status | Source Title | Source URL | Source Type | Date | Reliability (1-5) | Notes |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Claim | Source | Type | Date |
+|---|---|---|---|
 
 ---
 
@@ -494,19 +499,10 @@ RETURN FORMAT: Return the result as valid JSON wrapped in <json>...</json> tags,
   "sources": [
     {
       "claim": "string",
-      "claimType": "fact|inference|judgment",
       "sourceTitle": "string",
       "sourceUrl": "string",
-      "sourceType": "official|company|industry_report|market_data|media|community|other",
-      "date": "string",
-      "reliabilityScore": 1-5,
-      "evidenceStatus": "verified|partial|unsupported",
-      "evidenceClass": "primary_fact|secondary_estimate|analyst_forecast|author_inference|unverified",
-      "sourceTier": "primary|professional|financial_database|media|blog_or_forum|unknown",
-      "confidence": "high|medium|low",
-      "needsCrossCheck": true,
-      "crossCheckStatus": "matched|conflicted|not_checked|not_found",
-      "notes": "string"
+      "sourceType": "Official Filing|Company Disclosure|Government / Regulator|Industry Research|Financial Database|Industry Media|News Media|Other",
+      "date": "yyyy-mm-dd"
     }
   ],
   "dataGaps": ["string"]
@@ -515,11 +511,10 @@ RETURN FORMAT: Return the result as valid JSON wrapped in <json>...</json> tags,
 
 STRICT OUTPUT VALIDATION RULES:
 - sources must not be empty.
-- Every source must include claim, claimType, sourceTitle, sourceUrl, sourceType, date, reliabilityScore, evidenceStatus, evidenceClass, sourceTier, confidence, needsCrossCheck, and crossCheckStatus.
-- evidenceStatus must be "verified" or "partial" for any source included in the final report.
-- claimType "fact" can only use sourceTier "primary", "professional", or "financial_database".
-- claimType "fact" cannot use evidenceClass "secondary_estimate", "analyst_forecast", "author_inference", or "unverified".
-- Numeric claims must have a date, evidenceClass, sourceTier, confidence, and crossCheckStatus.
-- Do not return any source with evidenceStatus "unsupported"; unsupported items belong only in dataGaps.
-- Final Industry Conclusion must only summarize verified or partial evidence already listed in sources.`;
+- Every source must include claim, sourceTitle, sourceUrl, sourceType, and date.
+- sourceUrl must start with https:// or http://.
+- date must be yyyy-mm-dd.
+- Each section in markdown must include a "### Sources / 資料來源" block.
+- Do not include reliability scores, confidence scores, evidenceStatus, evidenceClass, sourceTier, or crossCheckStatus in the JSON or markdown source table.
+- Final Industry Conclusion must only summarize claims with listed sources or explicitly marked inferences.`;
 }
