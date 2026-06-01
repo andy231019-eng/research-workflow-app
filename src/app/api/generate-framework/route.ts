@@ -1,5 +1,12 @@
 import { NextResponse } from "next/server";
-import { getAnthropicClient } from "@/lib/anthropic";
+import {
+  createAnthropicMessage,
+  formatAnthropicError,
+  getApiKeyDiagnostics,
+  getFirstTextBlock,
+  isRetryableGenerationError,
+  resolveAnthropicApiKey,
+} from "@/lib/anthropic";
 import { buildFrameworkPrompt } from "@/lib/prompts/industryResearchPrompts";
 import { generateId, tryParseJson } from "@/lib/utils";
 import type { UserResearchInput, ResearchFramework } from "@/types/research";
@@ -52,11 +59,10 @@ export async function POST(req: Request) {
   const { apiKey, ...input } = body;
   const industryName = input.industryName?.trim() || "(missing)";
 
-  console.info(`[generate-framework] apiKey received: "${apiKey ? `${apiKey.slice(0, 12)}...${apiKey.slice(-4)} (len=${apiKey.length})` : "(none)"}"`);
-
   console.info(`[generate-framework:${requestId}] started`, {
     industryName,
     startedAt: new Date(startedAt).toISOString(),
+    apiKey: getApiKeyDiagnostics(apiKey),
   });
 
   if (!input.industryName?.trim()) {
@@ -66,9 +72,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "industryName is required" }, { status: 400 });
   }
 
-  let client;
+  let resolvedApiKey: string;
   try {
-    client = getAnthropicClient(apiKey);
+    resolvedApiKey = resolveAnthropicApiKey(apiKey);
   } catch (err) {
     console.error(`[generate-framework:${requestId}] client error`, {
       durationMs: durationMs(startedAt),
@@ -96,7 +102,7 @@ export async function POST(req: Request) {
         totalAttempts: 2,
       });
 
-      const message = await client.messages.create({
+      const message = await createAnthropicMessage(resolvedApiKey, {
         model: "claude-sonnet-4-6",
         max_tokens: 12000,
         messages: [{ role: "user", content: prompt + retryNote }],
@@ -107,7 +113,7 @@ export async function POST(req: Request) {
         durationMs: durationMs(attemptStartedAt),
       });
 
-      const raw = (message.content[0] as { type: string; text: string }).text;
+      const raw = getFirstTextBlock(message);
       const parsed = tryParseJson<ResearchFramework>(raw);
 
       if (!parsed) {
@@ -140,16 +146,16 @@ export async function POST(req: Request) {
       });
       return NextResponse.json(withIds);
     } catch (err) {
-      lastError = err instanceof Error ? err.message : "Unknown error";
+      lastError = formatAnthropicError(err);
       console.error(`[generate-framework:${requestId}] attempt failed`, {
         attempt,
         durationMs: durationMs(startedAt),
         error: lastError,
         errorType: err instanceof Error ? err.constructor.name : typeof err,
         errorStatus: (err as { status?: number }).status,
-        errorHeaders: (err as { headers?: unknown }).headers,
+        errorBody: (err as { responseText?: string }).responseText,
       });
-      if (attempt === 2) {
+      if (attempt === 2 || !isRetryableGenerationError(err)) {
         console.error(`[generate-framework:${requestId}] failed`, {
           durationMs: durationMs(startedAt),
           error: lastError,

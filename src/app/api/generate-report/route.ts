@@ -1,4 +1,9 @@
-import { getAnthropicClient } from "@/lib/anthropic";
+import {
+  formatAnthropicError,
+  isWebSearchToolError,
+  resolveAnthropicApiKey,
+  streamAnthropicText,
+} from "@/lib/anthropic";
 import { buildReportPrompt } from "@/lib/prompts/industryResearchPrompts";
 import { tryParseJson } from "@/lib/utils";
 import type { UserResearchInput, ResearchFramework, GeneratedReport, SourceItem } from "@/types/research";
@@ -99,9 +104,9 @@ export async function POST(req: Request) {
     return new Response(JSON.stringify({ error: "framework with pages is required" }), { status: 400 });
   }
 
-  let client;
+  let resolvedApiKey: string;
   try {
-    client = getAnthropicClient(apiKey);
+    resolvedApiKey = resolveAnthropicApiKey(apiKey);
   } catch (err) {
     return new Response(
       JSON.stringify({ error: err instanceof Error ? err.message : "Anthropic client error" }),
@@ -117,42 +122,30 @@ export async function POST(req: Request) {
       const send = (type: string, data: Record<string, unknown>) => {
         controller.enqueue(encoder.encode(makeSSELine(type, data)));
       };
-      const collectStreamText = async (
-        stream: ReturnType<typeof client.messages.stream>,
-        onChunk?: (text: string) => void
-      ): Promise<string> => {
-        let fullText = "";
-        for await (const event of stream) {
-          if (
-            event.type === "content_block_delta" &&
-            event.delta.type === "text_delta"
-          ) {
-            fullText += event.delta.text;
-            onChunk?.(event.delta.text);
-          }
-        }
-        return fullText;
-      };
       const generateText = async (
         content: string,
         onChunk?: (text: string) => void
       ): Promise<{ text: string; usingSearch: boolean }> => {
         try {
-          const stream = client.messages.stream({
+          const text = await streamAnthropicText(resolvedApiKey, {
             model: "claude-sonnet-4-6",
             max_tokens: 32000,
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            tools: [{ type: "web_search_20250305", name: "web_search" } as any],
+            tools: [{ type: "web_search_20250305", name: "web_search" }],
             messages: [{ role: "user", content }],
+          }, onChunk);
+          return { text, usingSearch: true };
+        } catch (err) {
+          if (!isWebSearchToolError(err)) throw err;
+
+          send("status", {
+            message: "Claude Web Search API 未啟用或不可用，改用純模型模式產出可追溯來源的報告...",
           });
-          return { text: await collectStreamText(stream, onChunk), usingSearch: true };
-        } catch {
-          const stream = client.messages.stream({
+          const text = await streamAnthropicText(resolvedApiKey, {
             model: "claude-sonnet-4-6",
             max_tokens: 32000,
             messages: [{ role: "user", content }],
-          });
-          return { text: await collectStreamText(stream, onChunk), usingSearch: false };
+          }, onChunk);
+          return { text, usingSearch: false };
         }
       };
 
@@ -213,7 +206,7 @@ export async function POST(req: Request) {
           return;
         }
       } catch (err) {
-        const msg = err instanceof Error ? err.message : "Unknown error";
+        const msg = formatAnthropicError(err);
         send("error", { message: "Report generation failed: " + msg });
         controller.close();
       }

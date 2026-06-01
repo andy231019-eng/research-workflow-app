@@ -245,24 +245,27 @@ export default function Home() {
 
         for (const line of lines) {
           if (!line.startsWith("data: ")) continue;
+          let event: {
+            type: string;
+            message?: string;
+            text?: string;
+            report?: GeneratedReport;
+          };
           try {
-            const event = JSON.parse(line.slice(6)) as {
-              type: string;
-              message?: string;
-              text?: string;
-              report?: GeneratedReport;
-            };
-            if (event.type === "status" && event.message) {
-              set({ loadingMessage: event.message });
-            } else if (event.type === "chunk" && event.text) {
-              set((prev) => ({ streamPreview: (prev.streamPreview ?? "") + event.text }));
-            } else if (event.type === "done" && event.report) {
-              report = event.report;
-            } else if (event.type === "error" && event.message) {
-              throw new Error(event.message);
-            }
+            event = JSON.parse(line.slice(6)) as typeof event;
           } catch {
             // ignore malformed SSE
+            continue;
+          }
+
+          if (event.type === "status" && event.message) {
+            set({ loadingMessage: event.message });
+          } else if (event.type === "chunk" && event.text) {
+            set((prev) => ({ streamPreview: (prev.streamPreview ?? "") + event.text }));
+          } else if (event.type === "done" && event.report) {
+            report = event.report;
+          } else if (event.type === "error" && event.message) {
+            throw new Error(event.message);
           }
         }
       }
