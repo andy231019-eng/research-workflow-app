@@ -23,7 +23,7 @@ export class AnthropicApiError extends Error {
 }
 
 export function resolveAnthropicApiKey(apiKey?: string): string {
-  const key = (apiKey || process.env.ANTHROPIC_API_KEY || "").replace(/\s/g, "");
+  const key = sanitizeAnthropicApiKey(apiKey || process.env.ANTHROPIC_API_KEY || "");
   if (!key) {
     throw new Error(
       "未設定 Anthropic API Key。請在表單頂部輸入你的 API Key，或在 .env.local 中設定 ANTHROPIC_API_KEY。"
@@ -37,7 +37,7 @@ export function resolveAnthropicApiKey(apiKey?: string): string {
 
 export function getApiKeyDiagnostics(apiKey?: string): Record<string, unknown> {
   const raw = apiKey || "";
-  const sanitized = raw.replace(/\s/g, "");
+  const sanitized = sanitizeAnthropicApiKey(raw);
   return {
     providedInBody: Boolean(raw),
     rawLength: raw.length,
@@ -85,11 +85,16 @@ export async function createAnthropicMessage<TBody extends Record<string, unknow
   apiKey: string,
   body: TBody
 ): Promise<AnthropicMessageResponse> {
-  const res = await fetch(ANTHROPIC_API_URL, {
-    method: "POST",
-    headers: makeAnthropicHeaders(apiKey),
-    body: JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await fetch(ANTHROPIC_API_URL, {
+      method: "POST",
+      headers: makeAnthropicHeaders(apiKey),
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    throw makeAnthropicTransportError(err);
+  }
 
   if (!res.ok) {
     throw await makeAnthropicApiError(res);
@@ -103,11 +108,16 @@ export async function streamAnthropicText<TBody extends Record<string, unknown>>
   body: TBody,
   onChunk?: (text: string) => void
 ): Promise<string> {
-  const res = await fetch(ANTHROPIC_API_URL, {
-    method: "POST",
-    headers: makeAnthropicHeaders(apiKey),
-    body: JSON.stringify({ ...body, stream: true }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(ANTHROPIC_API_URL, {
+      method: "POST",
+      headers: makeAnthropicHeaders(apiKey),
+      body: JSON.stringify({ ...body, stream: true }),
+    });
+  } catch (err) {
+    throw makeAnthropicTransportError(err);
+  }
 
   if (!res.ok) {
     throw await makeAnthropicApiError(res);
@@ -159,6 +169,20 @@ function makeAnthropicHeaders(apiKey: string): HeadersInit {
     "x-api-key": apiKey,
     "anthropic-version": ANTHROPIC_VERSION,
   };
+}
+
+function sanitizeAnthropicApiKey(raw: string): string {
+  return raw
+    .trim()
+    .replace(/^["'`]+|["'`]+$/g, "")
+    .replace(/[\s\u200B-\u200D\uFEFF]/g, "");
+}
+
+function makeAnthropicTransportError(err: unknown): AnthropicApiError {
+  const message = err instanceof Error ? err.message : "Unknown transport error";
+  return new AnthropicApiError(
+    "Anthropic API request could not be sent. This is usually caused by an invalid API key value or a serverless runtime request/header restriction: " + message
+  );
 }
 
 async function makeAnthropicApiError(res: Response): Promise<AnthropicApiError> {
