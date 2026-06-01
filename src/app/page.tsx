@@ -200,6 +200,55 @@ async function readJsonResponse<T>(res: Response, fallbackLabel: string): Promis
   }
 }
 
+type ReportStreamEvent = {
+  type: string;
+  message?: string;
+  text?: string;
+  report?: GeneratedReport;
+  progress?: number;
+  phase?: string;
+  requestId?: string;
+};
+
+type ReportStreamDiagnostics = {
+  lastEventType: string;
+  lastPhase: string;
+  lastProgress: number;
+  requestId: string;
+  receivedChunk: boolean;
+  parseErrors: number;
+  remainingBuffer: string;
+};
+
+function parseReportStreamEvent(frame: string): ReportStreamEvent | null {
+  const data = frame
+    .split("\n")
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trimStart())
+    .join("\n")
+    .trim();
+
+  if (!data) return null;
+  return JSON.parse(data) as ReportStreamEvent;
+}
+
+function formatMissingReportError(diagnostics: ReportStreamDiagnostics): string {
+  const details = [
+    diagnostics.requestId ? `Request ID: ${diagnostics.requestId}` : "",
+    diagnostics.lastEventType ? `最後事件: ${diagnostics.lastEventType}` : "",
+    diagnostics.lastPhase ? `最後階段: ${reportPhaseLabel(diagnostics.lastPhase)} (${diagnostics.lastPhase})` : "",
+    diagnostics.lastProgress ? `進度: ${Math.round(diagnostics.lastProgress)}%` : "",
+    diagnostics.receivedChunk ? "已收到部分報告預覽" : "沒有收到報告內容 chunk",
+    diagnostics.parseErrors > 0 ? `SSE 解析失敗 ${diagnostics.parseErrors} 次` : "",
+    diagnostics.remainingBuffer.trim() ? `剩餘未解析 buffer: ${previewResponseBody(diagnostics.remainingBuffer)}` : "",
+  ].filter(Boolean);
+
+  return [
+    "報告串流結束，但前端沒有收到最終 report 物件。這通常是部署層或網路在最後一個 SSE 事件前截斷連線。",
+    ...details,
+  ].join("\n");
+}
+
 export default function Home() {
   const [state, setState] = useState<AppState>(INITIAL);
 
@@ -489,6 +538,47 @@ export default function Home() {
       const decoder = new TextDecoder();
       let buffer = "";
       let report: GeneratedReport | null = null;
+      let lastEventType = "";
+      let lastPhase = "";
+      let lastProgress = 0;
+      let requestId = "";
+      let receivedChunk = false;
+      let parseErrors = 0;
+
+      const handleEvent = (event: ReportStreamEvent) => {
+        lastEventType = event.type || lastEventType;
+        lastPhase = event.phase || lastPhase;
+        requestId = event.requestId || requestId;
+        if (typeof event.progress === "number") lastProgress = event.progress;
+
+        if (event.type === "status" && event.message) {
+          set((prev) => ({
+            loadingMessage: event.message ?? prev.loadingMessage,
+            reportProgress:
+              typeof event.progress === "number"
+                ? Math.max(prev.reportProgress, event.progress)
+                : prev.reportProgress,
+            reportProgressLabel:
+              typeof event.phase === "string"
+                ? reportPhaseLabel(event.phase)
+                : prev.reportProgressLabel,
+          }));
+        } else if (event.type === "chunk" && event.text) {
+          receivedChunk = true;
+          set((prev) => ({
+            streamPreview: (prev.streamPreview ?? "") + event.text,
+            reportProgress: Math.min(58, Math.max(prev.reportProgress, prev.reportProgress + 0.4)),
+            reportProgressLabel: prev.reportProgressLabel || "搜尋與撰寫中",
+          }));
+        } else if (event.type === "done" && event.report) {
+          report = event.report;
+          set({ reportProgress: 100, reportProgressLabel: "完成" });
+        } else if (event.type === "error" && event.message) {
+          throw new Error(
+            requestId ? `${event.message}\nRequest ID: ${requestId}` : event.message
+          );
+        }
+      };
 
       while (true) {
         const { done, value } = await reader.read();
@@ -498,45 +588,27 @@ export default function Home() {
         buffer = lines.pop() ?? "";
 
         for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          let event: {
-            type: string;
-            message?: string;
-            text?: string;
-            report?: GeneratedReport;
-            progress?: number;
-            phase?: string;
-          };
+          let event: ReportStreamEvent | null = null;
           try {
-          event = JSON.parse(line.slice(6)) as typeof event;
+            event = parseReportStreamEvent(line);
           } catch {
-            continue;
+            parseErrors += 1;
           }
+          if (event) handleEvent(event);
+        }
+      }
 
-          if (event.type === "status" && event.message) {
-            set((prev) => ({
-              loadingMessage: event.message ?? prev.loadingMessage,
-              reportProgress:
-                typeof (event as { progress?: unknown }).progress === "number"
-                  ? Math.max(prev.reportProgress, (event as { progress: number }).progress)
-                  : prev.reportProgress,
-              reportProgressLabel:
-                typeof (event as { phase?: unknown }).phase === "string"
-                  ? reportPhaseLabel((event as { phase: string }).phase)
-                  : prev.reportProgressLabel,
-            }));
-          } else if (event.type === "chunk" && event.text) {
-            set((prev) => ({
-              streamPreview: (prev.streamPreview ?? "") + event.text,
-              reportProgress: Math.min(58, Math.max(prev.reportProgress, prev.reportProgress + 0.4)),
-              reportProgressLabel: prev.reportProgressLabel || "搜尋與撰寫中",
-            }));
-          } else if (event.type === "done" && event.report) {
-            report = event.report;
-            set({ reportProgress: 100, reportProgressLabel: "完成" });
-          } else if (event.type === "error" && event.message) {
-            throw new Error(event.message);
-          }
+      const trailing = buffer.trim();
+      if (trailing) {
+        let event: ReportStreamEvent | null = null;
+        try {
+          event = parseReportStreamEvent(trailing);
+        } catch {
+          parseErrors += 1;
+        }
+        if (event) {
+          handleEvent(event);
+          buffer = "";
         }
       }
 
@@ -544,7 +616,15 @@ export default function Home() {
         saveToHistory(report, state.input.industryName, geoLabelFromInput(state.input), false);
         set({ phase: "report_ready", report, loadingMessage: "", streamPreview: "", reportProgress: 100, reportProgressLabel: "" });
       } else {
-        throw new Error("Report generation completed but no report was received.");
+        throw new Error(formatMissingReportError({
+          lastEventType,
+          lastPhase,
+          lastProgress,
+          requestId,
+          receivedChunk,
+          parseErrors,
+          remainingBuffer: buffer,
+        }));
       }
     } catch (err) {
       set({
